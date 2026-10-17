@@ -2358,7 +2358,7 @@
 
         /* Ejecuta el código sin interfaz: las entradas se rellenan con valores
            razonables y hay un tope de instrucciones para no colgar la pestaña. */
-        function dryRunPSeInt(code, profile) {
+        function dryRunPSeInt(code, profile, opciones) {
             return new Promise((resolve) => {
                 if (!window.PSEInt || typeof window.PSEInt.Runner !== 'function') {
                     resolve({ ok: true, sinMotor: true });
@@ -2367,7 +2367,7 @@
                 let salida = '';
                 let error = null, linea = 0, detenidoPorTope = false;
                 let nLecturas = 0;
-                const relleno = [3, 5, 2, 0];
+                const relleno = (opciones && opciones.relleno) || [3, 5, 2, 0];
                 let runner = null;
                 const alarma = setTimeout(() => {
                     detenidoPorTope = true;
@@ -2471,9 +2471,17 @@
                 if (!bloque || !esCodigoEjecutable(bloque.code)) return { texto: actual, report: null };
 
                 if (ctx.onEstado) ctx.onEstado('run', null);
-                const res = await dryRunPSeInt(bloque.code, activeProfile);
+                let res = await dryRunPSeInt(bloque.code, activeProfile);
                 ultimo = res;
                 if (res.sinMotor) return { texto: actual, report: null };
+
+                // Segunda opinión con otros datos de relleno: si el fallo solo
+                // aparece con la primera combinación, es de los datos de prueba,
+                // no del algoritmo, y no se le pide una corrección al modelo.
+                if (!res.ok && !res.timeout) {
+                    const otra = await dryRunPSeInt(bloque.code, activeProfile, { relleno: [1, 1, 1, 1] });
+                    if (otra.ok) { res = otra; ultimo = otra; }
+                }
 
                 if (res.ok) {
                     return {
