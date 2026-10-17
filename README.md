@@ -37,12 +37,24 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
        perfiles/          (carpeta con los iconos)
        proxy.php
 
-2. Crea `patto_secret.php` en la carpeta PADRE de la app, fuera de la carpeta
-   publica, con una sola linea:
+2. Coloca la API key, por orden de preferencia:
 
-       <?php define('REFLECTION_API_KEY', 'tu_key');
+   a) Fuera de la carpeta web: `patto_secret.php` en la carpeta PADRE de la app,
+      con una sola linea:
 
-   Toma como base `patto_secret.example.php`.
+          <?php define('REFLECTION_API_KEY', 'tu_key');
+
+      Toma como base `patto_secret.example.php`.
+
+   b) Si el panel solo permite subir dentro de la carpeta web (en VistaPanel, el
+      panel de Profreehost, todo vive en `htdocs`), deja `patto_secret.php`
+      junto a `proxy.php`. El proxy lo busca ahi tambien, y como es un archivo
+      PHP el servidor lo ejecuta en vez de mostrarlo, asi que pedirlo por URL no
+      revela la key.
+
+   c) Como ultimo recurso, la constante de respaldo dentro de `proxy.php`.
+      Funciona igual, pero deja la key escrita en un archivo de la carpeta
+      publica: usa (a) o (b) siempre que puedas.
 
 3. Abre la pagina. Si falta la key, `proxy.php` responde 500 con un aviso claro.
 
