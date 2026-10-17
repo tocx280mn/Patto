@@ -12,6 +12,8 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
 - Escribe pseudocodigo PSeInt respetando el perfil de lenguaje activo.
 - Ejecuta el algoritmo: la consola atiende los `Leer` y muestra la salida de
   `Escribir`.
+- Antes de responder, ejecuta el pseudocodigo con el motor y, si da error, se lo
+  devuelve al modelo para que lo corrija. Se apaga en Configuracion.
 - Diagramas de flujo y de Nassi-Shneiderman generados como SVG (se activan en
   Configuracion).
 - 469 perfiles de lenguaje (los de PSeInt mas tres extra), cada uno con su icono.
@@ -82,10 +84,16 @@ en `proxy.php`.
     node dev/test_tresenraya.js     # partida completa de tres en raya
     node dev/test_diagram.js        # genera diagramas de prueba en dev/
     node dev/test_examples.js       # pasa los ejemplos oficiales de PSeInt
+    node dev/test_pseint_interp.js  # compara el motor con la suite oficial de PSeInt
 
 `test_examples.js` necesita la carpeta `bin/ejemplos` de la distribucion de
 PSeInt. Indica su ruta con la variable de entorno `PSEINT_EJEMPLOS`. Si la carpeta
 no existe, la prueba se omite con un aviso.
+
+`test_pseint_interp.js` recorre `pseint/test/interp` (los 195 casos del
+repositorio de PSeInt) y compara la salida del motor con los `.out` oficiales.
+Indica esa carpeta con `PSEINT_TEST_INTERP`; con `--real <caso>` se ejecuta el
+`pseint.exe` instalado para comprobar un caso concreto.
 
 ## Estructura
 

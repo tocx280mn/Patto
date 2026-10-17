@@ -374,10 +374,18 @@ Parser.prototype.parseBlock = function (stopSet) {
   return stmts;
 };
 
+var PARSER_CLOSERS = ['FINSI', 'FINMIENTRAS', 'FINPARA', 'FINSENGUN', 'FINSEGUN', 'FINREPETIR',
+  'SINO', 'FINFUNCION', 'FINSUBPROCESO', 'FINPROCESO', 'FINALGORITMO', 'FINSUBALGORITMO'];
+
 Parser.prototype.parseStatement = function () {
   var toks = this.tokensAt(this.i);
   var line = this.curLine();
   var k = this.kw(toks[0]);
+  // Un cierre que no corresponde a ninguna estructura abierta: mensaje claro en
+  // lugar de un confuso "la función X no existe".
+  if (k && PARSER_CLOSERS.indexOf(k) >= 0) {
+    throw new PseintError('No se esperaba «' + toks[0].v + '» en este punto: no hay ninguna estructura abierta que cerrar.', line);
+  }
   switch (k) {
     case 'DEFINIR': return this.parseDefinir(toks, line);
     case 'DIMENSIONAR': case 'DIMENSION': case 'REDIMENSIONAR': case 'REDIMENSION':
@@ -1163,7 +1171,7 @@ Interpreter.prototype.declare = function (name, c, tipo) {
 Interpreter.prototype.tick = function () {
   this.steps++;
   if (this.stopped) throw new StopSignal('Ejecución detenida por el usuario.');
-  if (this.steps > MAX_STEPS) throw new StopSignal('Demasiadas instrucciones ejecutadas (posible bucle infinito).');
+  if (this.steps > (this.maxSteps || MAX_STEPS)) throw new StopSignal('Demasiadas instrucciones ejecutadas (posible bucle infinito).');
 };
 
 Interpreter.prototype.maybeYield = function () {
@@ -1784,6 +1792,7 @@ function Runner(code, opts) {
   this.code = code;
   this.rules = opts.rules || {};
   this.io = opts.io || {};
+  this.maxSteps = opts.maxSteps || 0;   // 0 = límite por defecto del motor
   this.interp = null;
 }
 Runner.prototype.stop = function () { if (this.interp) this.interp.stopped = true; };
@@ -1793,6 +1802,7 @@ Runner.prototype.run = async function () {
     var ast = parse(this.code, this.rules);
     ast.inferred = inferTypes(ast);
     var interp = new Interpreter(ast, this.rules, this.io);
+    if (this.maxSteps) interp.maxSteps = this.maxSteps;
     this.interp = interp;
     if (this.io.onStart) this.io.onStart(ast.name);
     await interp.execBlock(ast.body);

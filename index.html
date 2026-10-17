@@ -273,6 +273,40 @@
         }
         .pseint-profile-warn-hint { margin-top: 5px; font-size: 11px; opacity: 0.85; }
 
+        /* ── Aviso de verificación: Patto ejecuta el algoritmo antes de responder ── */
+        .pseint-verify-chip {
+            display: flex;
+            align-items: flex-start;
+            gap: 7px;
+            margin-top: 8px;
+            padding: 8px 11px;
+            border: 1px solid transparent;
+            border-radius: 9px;
+            font-size: 11.5px;
+            line-height: 1.45;
+        }
+        .pseint-verify-chip .pv-icon { flex-shrink: 0; font-weight: 700; }
+        .pseint-verify-chip code {
+            font-family: var(--font-mono, ui-monospace, monospace);
+            font-size: 11px;
+        }
+        .pseint-verify-ok { background-color: rgba(21, 128, 61, 0.10); border-color: rgba(21, 128, 61, 0.35); color: var(--pseint-green); }
+        .pseint-verify-fix { background-color: rgba(29, 78, 216, 0.10); border-color: rgba(29, 78, 216, 0.35); color: var(--pseint-blue); }
+        .pseint-verify-warn { background-color: rgba(180, 83, 9, 0.10); border-color: rgba(180, 83, 9, 0.35); color: #B45309; }
+        .pseint-verify-err { background-color: rgba(185, 28, 28, 0.10); border-color: rgba(185, 28, 28, 0.35); color: #B91C1C; }
+        .pseint-verify-status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            margin-bottom: 8px;
+            padding: 7px 10px;
+            border: 1px dashed var(--border-color);
+            border-radius: 9px;
+            background-color: var(--bg-panel);
+            color: var(--text-muted);
+            font-size: 11.5px;
+        }
+
         /* ── Subida de archivos .psc ─────────────────────────────────────────── */
         .attach-chip {
             display: flex;
@@ -1343,6 +1377,15 @@
                         <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
                             Desactivado, los algoritmos solo se muestran como código (sin los botones Código / Diagrama).
                         </p>
+                        <label class="flex items-start gap-2 text-xs cursor-pointer pt-1" style="color: var(--text-main);"
+                               title="Patto ejecuta el algoritmo con su motor de PSeInt antes de responder y, si falla, lo corrige">
+                            <input type="checkbox" id="verifyCodeToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
+                                   onchange="toggleVerifyCode(this.checked)">
+                            <span>Ejecutar y corregir el código</span>
+                        </label>
+                        <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
+                            Antes de responder, Patto ejecuta el pseudocódigo con su motor de PSeInt. Si da error, se lo devuelve al modelo para que lo arregle.
+                        </p>
                     </div>
                 </div>
 
@@ -1781,6 +1824,10 @@
 
         /* ── Visualización de diagramas (Código / Diagrama). Desactivado por defecto ── */
         let showDiagramsEnabled = false;
+
+        /* ── Ejecución y auto-corrección del código generado. Activado por defecto ── */
+        let verifyCodeEnabled = true;
+        const MAX_CODE_REPAIRS = 2;   // intentos de corrección por respuesta
 
         /* ── Subida de archivos .psc (solo pseudocódigo de PSeInt) ───────────────── */
         const PSC_MAX_BYTES = 200 * 1024;   // un .psc real nunca se acerca a 200 KB
@@ -2273,7 +2320,253 @@
             </div>`;
         }
 
-        function formatAssistantMarkdown(src) {
+        /* ═══════════════════════════════════════════════════════════════════════
+           7-bis. EJECUCIÓN Y AUTO-CORRECCIÓN DEL CÓDIGO GENERADO
+           Patto ejecuta el pseudocódigo con su propio motor PSeInt ANTES de
+           responder. Si el algoritmo falla, el error exacto vuelve al modelo y
+           se entrega la versión corregida (hasta MAX_CODE_REPAIRS intentos).
+           ═══════════════════════════════════════════════════════════════════════ */
+
+        /* Bloques ```pseint ... ``` con sus posiciones exactas dentro del texto. */
+        function extractPseintBlocks(text) {
+            const out = [];
+            const re = /```[ \t]*([a-zA-Z0-9_-]*)[ \t]*\r?\n([\s\S]*?)```/g;
+            let m;
+            while ((m = re.exec(String(text))) !== null) {
+                const lang = String(m[1] || '').toLowerCase();
+                if (lang && ['pseint', 'psc', 'pseudocodigo', 'pseudocódigo'].indexOf(lang) < 0) continue;
+                out.push({
+                    start: m.index,
+                    end: m.index + m[0].length,
+                    code: m[2].replace(/^\s*\n+/, '').replace(/\n+\s*$/, '')
+                });
+            }
+            return out;
+        }
+
+        /* Un bloque se puede ejecutar si es un programa completo (o un subproceso).
+           Los fragmentos sueltos que a veces explica Patto no se ejecutan. */
+        function esCodigoEjecutable(code) {
+            return /(^|\n)\s*(proceso|algoritmo|subproceso|subalgoritmo|funcion|función)\b/i.test(code);
+        }
+
+        /* El bloque que se ejecuta es el que define el programa principal. */
+        function elegirBloquePrincipal(bloques) {
+            if (!bloques.length) return null;
+            return bloques.find(b => /\b(proceso|algoritmo)\b/i.test(b.code)) || bloques[0];
+        }
+
+        /* Ejecuta el código sin interfaz: las entradas se rellenan con valores
+           razonables y hay un tope de instrucciones para no colgar la pestaña. */
+        function dryRunPSeInt(code, profile) {
+            return new Promise((resolve) => {
+                if (!window.PSEInt || typeof window.PSEInt.Runner !== 'function') {
+                    resolve({ ok: true, sinMotor: true });
+                    return;
+                }
+                let salida = '';
+                let error = null, linea = 0, detenidoPorTope = false;
+                let nLecturas = 0;
+                const relleno = [3, 5, 2, 0];
+                let runner = null;
+                const alarma = setTimeout(() => {
+                    detenidoPorTope = true;
+                    if (runner) { try { runner.stop(); } catch (e) {} }
+                }, 4000);
+
+                const io = {
+                    print: (t) => { salida += t; if (salida.length > 6000) salida = salida.slice(-6000); },
+                    clear: () => { salida = ''; },
+                    read: (tipo) => {
+                        if (tipo === 'logico') return 'VERDADERO';
+                        if (tipo === 'caracter') return 'dato';
+                        return String(relleno[nLecturas++ % relleno.length]);
+                    },
+                    waitKey: () => undefined,
+                    waitMs: () => undefined,
+                    onError: (msg, ln) => { error = msg; linea = ln || 0; },
+                    onFinish: () => {}
+                };
+
+                try {
+                    runner = new PSEInt.Runner(code, { rules: profile, io: io, maxSteps: 300000 });
+                } catch (e) {
+                    clearTimeout(alarma);
+                    resolve({ ok: false, error: (e && e.message) || String(e), linea: (e && e.line) || 0, salida: salida });
+                    return;
+                }
+                Promise.resolve(runner.run()).then(() => {
+                    clearTimeout(alarma);
+                    if (detenidoPorTope || /demasiadas instrucciones|detenida por el usuario/i.test(error || '')) {
+                        resolve({ ok: false, timeout: true, salida: salida, error: error || 'La ejecución no terminó a tiempo.' });
+                        return;
+                    }
+                    resolve({ ok: !error, error: error, linea: linea, salida: salida });
+                }).catch((e) => {
+                    clearTimeout(alarma);
+                    resolve({ ok: false, error: (e && e.message) || String(e), linea: (e && e.line) || 0, salida: salida });
+                });
+            });
+        }
+
+        function construirPeticionCorreccion(res) {
+            return [
+                'El algoritmo que acabas de entregar NO se ejecuta correctamente con el perfil activo "' + activePresetName + '".',
+                'Lo ejecuté con el motor de PSeInt y falló' + (res.linea ? ' en la línea ' + res.linea : '') + ' con este error:',
+                '',
+                '    ' + String(res.error || '').split('\n')[0],
+                '',
+                'Corrige el algoritmo completo (revisa esa línea, los tipos de datos, los ciclos y las reglas del perfil).',
+                'Responde ÚNICAMENTE con el bloque ```pseint ... ``` corregido, sin explicaciones ni texto fuera del bloque.'
+            ].join('\n');
+        }
+
+        /* Pide al modelo una versión corregida del algoritmo. El turno se
+           renderiza en un contenedor fuera de pantalla: solo interesa el código. */
+        async function pedirCodigoCorregido(textoActual, res, ctx) {
+            const limpio = splitThinkAndContent(textoActual);
+            const apiMessages = (ctx.apiMessages || []).concat([
+                {
+                    role: 'assistant',
+                    content: limpio.answer || textoActual,
+                    reasoning_content: ctx.reasoning || 'Respuesta anterior.'
+                },
+                { role: 'user', content: construirPeticionCorreccion(res) }
+            ]);
+            const oculto = document.createElement('div');
+            const turn = await streamBeamTurn({
+                apiMessages: apiMessages,
+                targetEl: oculto,
+                thoughtBoxId: ctx.thoughtBoxId,
+                startTime: ctx.startTime,
+                temp: ctx.temp,
+                topP: ctx.topP,
+                signal: ctx.signal,
+                stats: ctx.stats
+            });
+            if (ctx.stats) {
+                if (turn.usage && typeof turn.usage.completion_tokens === 'number') {
+                    ctx.stats.tokens += turn.usage.completion_tokens;
+                    ctx.stats.razonamiento += (turn.usage.completion_tokens_details && turn.usage.completion_tokens_details.reasoning_tokens) || 0;
+                } else {
+                    ctx.stats.tokens += estimarTokens(turn.chars);
+                    ctx.stats.hayEstimados = true;
+                }
+            }
+            const trozos = extractPseintBlocks(splitThinkAndContent(turn.content).answer || turn.content);
+            if (!trozos.length) return null;
+            trozos.sort((a, b) => b.code.length - a.code.length);
+            return trozos[0];
+        }
+
+        /* Bucle de verificación: ejecuta, informa, corrige y vuelve a ejecutar. */
+        async function verificarYCORREGIR(texto, ctx) {
+            let actual = texto;
+            let intentos = 0;
+            let primerError = null;
+            let ultimo = null;
+
+            while (true) {
+                const bloque = elegirBloquePrincipal(extractPseintBlocks(actual));
+                if (!bloque || !esCodigoEjecutable(bloque.code)) return { texto: actual, report: null };
+
+                if (ctx.onEstado) ctx.onEstado('run', null);
+                const res = await dryRunPSeInt(bloque.code, activeProfile);
+                ultimo = res;
+                if (res.sinMotor) return { texto: actual, report: null };
+
+                if (res.ok) {
+                    return {
+                        texto: actual,
+                        report: {
+                            estado: intentos ? 'corregido' : 'verificado',
+                            intentos: intentos,
+                            salida: res.salida,
+                            error: primerError ? primerError.error : null,
+                            linea: primerError ? primerError.linea : 0
+                        }
+                    };
+                }
+                if (res.timeout) {
+                    return { texto: actual, report: { estado: 'lento', error: res.error } };
+                }
+                if (!primerError) primerError = { error: res.error, linea: res.linea };
+
+                if (intentos >= MAX_CODE_REPAIRS || (ctx.signal && ctx.signal.aborted)) break;
+
+                intentos++;
+                if (ctx.onEstado) ctx.onEstado('fix', res);
+                let corregido = null;
+                try {
+                    corregido = await pedirCodigoCorregido(actual, res, ctx);
+                } catch (e) {
+                    console.warn('[Patto] no se pudo pedir la corrección:', e);
+                    break;
+                }
+                if (!corregido || !esCodigoEjecutable(corregido.code)) break;
+
+                actual = actual.slice(0, bloque.start)
+                    + '```pseint\n' + corregido.code + '\n```'
+                    + actual.slice(bloque.end);
+            }
+
+            return {
+                texto: actual,
+                report: (ctx.signal && ctx.signal.aborted) ? null : {
+                    estado: 'error',
+                    error: (ultimo && ultimo.error) || 'No se pudo ejecutar el algoritmo.',
+                    linea: (ultimo && ultimo.linea) || 0,
+                    intentos: intentos
+                }
+            };
+        }
+
+        /* Primeras palabras de la salida, para el aviso compacto. */
+        function resumirSalida(salida) {
+            const limpio = String(salida || '').replace(/>[ \t]?/g, '').replace(/\s+/g, ' ').trim();
+            if (!limpio) return '';
+            return limpio.length > 70 ? limpio.slice(0, 70) + '…' : limpio;
+        }
+
+        /* Aviso compacto que acompaña al algoritmo generado. */
+        function verifyChipHtml(r) {
+            if (!r || !r.estado) return '';
+            const err = escapeHtml(String(r.error || '').split('\n')[0].slice(0, 160).replace(/[.\s]+$/, ''));
+            const salida = resumirSalida(r.salida);
+            const cola = salida ? ' <span style="opacity:0.8">Salida: ' + escapeHtml(salida) + '</span>' : '';
+
+            if (r.estado === 'verificado') {
+                return '<div class="pseint-verify-chip pseint-verify-ok" title="Ejecutado con el motor de PSeInt, perfil ' + escapeHtml(activePresetName) + '">'
+                    + '<span class="pv-icon">✓</span><span><strong>Ejecutado y verificado</strong> con el motor de PSeInt.' + cola + '</span></div>';
+            }
+            if (r.estado === 'corregido') {
+                return '<div class="pseint-verify-chip pseint-verify-fix" title="Error detectado: ' + escapeHtml(r.error || '') + '">'
+                    + '<span class="pv-icon">✓</span><span><strong>Corregido automáticamente</strong>: al ejecutarlo, el motor dio '
+                    + (r.linea ? 'error en la línea <code>' + r.linea + '</code> ' : 'un error ')
+                    + (err ? '(<code>' + err + '</code>) ' : '')
+                    + 'y Patto lo arregló' + (r.intentos > 1 ? ' tras ' + r.intentos + ' intentos' : '') + '.' + cola + '</span></div>';
+            }
+            if (r.estado === 'lento') {
+                return '<div class="pseint-verify-chip pseint-verify-warn" title="' + escapeHtml(r.error || '') + '">'
+                    + '<span class="pv-icon">!</span><span><strong>No terminó de ejecutarse</strong>: el motor agotó el límite de instrucciones. Revisa los ciclos (puede haber un bucle sin salida).</span></div>';
+            }
+            return '<div class="pseint-verify-chip pseint-verify-err">'
+                + '<span class="pv-icon">✗</span><span><strong>Error de ejecución</strong>'
+                + (r.linea ? ' en la línea <code>' + r.linea + '</code>' : '')
+                + (err ? ': <code>' + err + '</code>' : '')
+                + '. Pídele a Patto que lo corrija.</span></div>';
+        }
+
+        /* Aviso temporal mientras Patto ejecuta o corrige, dentro de la burbuja. */
+        function verifyStatusHtml(kind, res) {
+            const texto = kind === 'fix'
+                ? 'Corrigiendo el error' + (res && res.linea ? ' de la línea ' + res.linea : '') + ' que detectó el motor…'
+                : 'Ejecutando el algoritmo con el motor de PSeInt…';
+            const icono = kind === 'fix' ? '🔧' : '⚙️';
+            return '<div class="pseint-verify-status"><span>' + icono + '</span><span>' + escapeHtml(texto) + '</span></div>';
+        }
+
+        function formatAssistantMarkdown(src, verifyReport) {
             if (!src) return '';
             const blocks = [];
             let text = String(src);
@@ -2301,8 +2594,19 @@
             // Saltos de línea
             text = text.replace(/\n/g, '<br>');
 
-            // Restaurar bloques de código PSeInt
-            text = text.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (_, idx) => blocks[+idx]);
+            // Restaurar bloques de código PSeInt. El aviso de verificación se
+            // coloca justo debajo del primer algoritmo de la respuesta.
+            const avisoVerificacion = verifyReport ? verifyChipHtml(verifyReport) : '';
+            let avisoPuesto = false;
+            text = text.replace(/\u0000CODEBLOCK(\d+)\u0000/g, (_, idx) => {
+                const html = blocks[+idx];
+                const esTarjeta = String(html).trim().indexOf('<div class="pseint-code-card"') === 0;
+                if (!avisoPuesto && avisoVerificacion && esTarjeta) {
+                    avisoPuesto = true;
+                    return html + avisoVerificacion;
+                }
+                return html;
+            });
 
             return text;
         }
@@ -3088,6 +3392,22 @@
             if (cb) cb.checked = showDiagramsEnabled;
         }
 
+        /* ── "Ejecutar y corregir el código" (Configuración → Visualización) ───── */
+        window.toggleVerifyCode = function(enabled) {
+            verifyCodeEnabled = (typeof enabled === 'boolean') ? enabled : !verifyCodeEnabled;
+            try { localStorage.setItem('patto_verify_code', verifyCodeEnabled ? '1' : '0'); } catch (e) {}
+            showToast(verifyCodeEnabled
+                ? 'Patto ejecutará y corregirá el código antes de responder'
+                : 'Verificación del código desactivada');
+        };
+
+        function initVerifyCodeSetting() {
+            const saved = localStorage.getItem('patto_verify_code');
+            verifyCodeEnabled = saved === null ? true : saved === '1';   // activado por defecto
+            const cb = document.getElementById('verifyCodeToggle');
+            if (cb) cb.checked = verifyCodeEnabled;
+        }
+
         /* ═══════════════════════════════════════════════════════════════════════
            SUBIDA DE ARCHIVOS .PSC (solo pseudocódigo de PSeInt)
            ═══════════════════════════════════════════════════════════════════════ */
@@ -3628,7 +3948,7 @@
                         reasoningTokens: m.reasoningTokens || 0
                       }
                     : null;
-                appendMessageBubble(m.role, m.content, false, m.thought || '', m.thoughtDuration || null, guardadas);
+                appendMessageBubble(m.role, m.content, false, m.thought || '', m.thoughtDuration || null, guardadas, m.verify || null);
             });
             scrollToBottom();
         }
@@ -3648,7 +3968,7 @@
             return html;
         }
 
-        function appendMessageBubble(role, content, isStreaming = false, thoughtText = '', thoughtDuration = null, savedStats = null) {
+        function appendMessageBubble(role, content, isStreaming = false, thoughtText = '', thoughtDuration = null, savedStats = null, savedVerify = null) {
             document.getElementById('welcomeView')?.remove();
             const inner = document.getElementById('chatInner');
             const wrapper = document.createElement('div');
@@ -3681,7 +4001,7 @@
                     : '';
                 const initialHtml = isStreaming
                     ? `<div class="py-2 flex items-center gap-1.5"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`
-                    : (savedThoughtHtml + formatAssistantMarkdown(content) + savedStatsHtml);
+                    : (savedThoughtHtml + formatAssistantMarkdown(content, savedVerify) + savedStatsHtml);
 
                 wrapper.innerHTML = `
                     <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm mt-0.5"
@@ -3829,6 +4149,8 @@
             let fullResponse = '';
             let streamedThought = '';
             let lastFinishReason = null;
+            // Resultado de la ejecución del código (para el aviso bajo el algoritmo).
+            let verifyReport = null;
             // Acumulador de tokens de TODAS las vueltas (búsqueda web + continuaciones),
             // para que el tok/s corresponda a la respuesta completa.
             const stats = { tokens: 0, razonamiento: 0, hayEstimados: false };
@@ -3927,6 +4249,49 @@
                     rounds = MAX_WEB_SEARCH_ROUNDS;   // ya no hace falta buscar: sólo terminar
                 }
                 fullResponse = finalAnswerText;
+
+                // ── Ejecución y auto-corrección del código generado ──────────
+                // Patto no se limita a escribir el pseudocódigo: lo ejecuta con su
+                // motor de PSeInt y, si falla, se lo devuelve al modelo para que lo
+                // arregle ANTES de mostrar la respuesta.
+                if (verifyCodeEnabled && finalAnswerText && !abortController.signal.aborted) {
+                    const parcial = splitThinkAndContent(finalAnswerText);
+                    const respuestaCruda = parcial.answer || '';
+                    if (respuestaCruda) {
+                        const quitarEstadoVerificacion = () => {
+                            const aviso = targetEl.querySelector('.pseint-verify-status');
+                            if (aviso) aviso.remove();
+                        };
+                        try {
+                            const v = await verificarYCORREGIR(respuestaCruda, {
+                                apiMessages: apiMessages,
+                                temp: temp,
+                                topP: topP,
+                                signal: abortController.signal,
+                                startTime: startTime,
+                                stats: stats,
+                                thoughtBoxId: thoughtBoxId,
+                                reasoning: streamedThought,
+                                onEstado: (kind, res) => {
+                                    quitarEstadoVerificacion();
+                                    targetEl.insertAdjacentHTML('afterbegin', verifyStatusHtml(kind, res));
+                                    scrollToBottom();
+                                }
+                            });
+                            verifyReport = v.report;
+                            if (v.texto && v.texto !== respuestaCruda) {
+                                finalAnswerText = parcial.thought
+                                    ? (' thinking' + parcial.thought + '</think>\n' + v.texto)
+                                    : v.texto;
+                                fullResponse = finalAnswerText;
+                            }
+                        } catch (e) {
+                            console.warn('[Patto] no se pudo verificar el código:', e);
+                        } finally {
+                            quitarEstadoVerificacion();
+                        }
+                    }
+                }
             } catch (err) {
                 if (err.name !== 'AbortError' && !fullResponse) {
                     // Antes el aviso era siempre "sin conexion", aunque el problema fuera
@@ -3991,7 +4356,7 @@
                 reasoningTokens: stats.razonamiento
             });
 
-            targetEl.innerHTML = finalThoughtHtml + formatAssistantMarkdown(finalAnswer) + truncatedNote + finalStatsHtml;
+            targetEl.innerHTML = finalThoughtHtml + formatAssistantMarkdown(finalAnswer, verifyReport) + truncatedNote + finalStatsHtml;
 
             messages.push({
                 role: 'assistant',
@@ -4006,7 +4371,9 @@
                 tokens: stats.tokens,
                 approxTokens: stats.hayEstimados,
                 reasoningTokens: stats.razonamiento,
-                finishReason: abortController.signal.aborted ? 'abort' : lastFinishReason
+                finishReason: abortController.signal.aborted ? 'abort' : lastFinishReason,
+                // Resultado de haber ejecutado el algoritmo (se repinta al reabrir).
+                verify: verifyReport || undefined
             });
             persistCurrentConversation();
             setGeneratingState(false);
@@ -4169,6 +4536,7 @@
             updateWebSearchUI();
 
             initShowDiagramsSetting();
+            initVerifyCodeSetting();
             initPscDropZone();
 
             loadProfileState();
