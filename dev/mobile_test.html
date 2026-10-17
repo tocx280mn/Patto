@@ -5,7 +5,7 @@
 <title>Patto · prueba de móvil</title>
 <style>
     html, body { margin: 0; padding: 0; background: #0f172a; font-family: system-ui, sans-serif; }
-    .fila { display: flex; gap: 20px; padding: 16px; align-items: flex-start; }
+    .fila { display: flex; gap: 20px; padding: 16px; align-items: flex-start; flex-wrap: wrap; }
     .marco { background: #1e293b; border-radius: 18px; padding: 10px; }
     .marco h3 { color: #94a3b8; font-size: 11px; margin: 0 0 8px; font-weight: 600; letter-spacing: .05em; }
     iframe { border: 0; background: #fff; display: block; }
@@ -31,6 +31,14 @@
         <div class="marco">
             <h3>ESCRITORIO 1000 × 700</h3>
             <iframe id="escritorio" src="../index.html" width="1000" height="700"></iframe>
+        </div>
+        <div class="marco">
+            <h3>ESCRITORIO BAJO 1366 × 633</h3>
+            <iframe id="escritorioBajo" src="../index.html" width="1366" height="633"></iframe>
+        </div>
+        <div class="marco">
+            <h3>ESCRITORIO MUY BAJO 1366 × 600</h3>
+            <iframe id="escritorioMuyBajo" src="../index.html" width="1366" height="600"></iframe>
         </div>
     </div>
 </body>

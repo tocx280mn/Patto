@@ -24,9 +24,10 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
   responde sobre PSeInt; encendida, consulta la web cuando hace falta.
 - Adjunta archivos `.psc` para que los revise o los ejecute.
 - Interfaz adaptable a movil: el dialogo de perfiles se pliega en secciones
-  (perfiles, parametros, visualizacion y reglas), se abre una a la vez y cada una
-  se queda con el alto libre, asi que no hay que recorrer la ventana. Ademas,
-  animaciones cortas al aparecer cada mensaje, al abrir los dialogos y al pasar el
+  (perfiles, parametros, visualizacion y reglas), se abre una a la vez --siempre
+  queda una abierta-- y cada una se queda con el alto libre, asi que no hay que
+  recorrer la ventana. En escritorio no cambia nada: se ven todas desplegadas,
+  como en PSeInt. Ademas, animaciones cortas al aparecer cada mensaje, al abrir los dialogos y al pasar el
   raton por los botones.
 
 ## Requisitos
@@ -102,8 +103,10 @@ Indica esa carpeta con `PSEINT_TEST_INTERP`; con `--real <caso>` se ejecuta el
 `pseint.exe` instalado para comprobar un caso concreto.
 
 `dev/mobile_test.html` monta `index.html` dentro de marcos de 390x780, 320x640,
-360x480 y 1000x700. Como las media queries responden al ancho del marco, sirve
-para comprobar el diseno movil sin tocar el tamano de la ventana.
+360x480, 1000x700, 1366x633 y 1366x600. Como las media queries responden al
+ancho del marco, sirve para comprobar el diseno movil sin tocar el tamano de la
+ventana; los dos ultimos son ventanas de escritorio bajas, donde el dialogo de
+perfiles se queda sin alto y hay que comprobar que nada se solape.
 
 ## El motor y los perfiles
 

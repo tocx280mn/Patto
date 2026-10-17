@@ -915,7 +915,15 @@
         /* ═══════ DIÁLOGO DE PERFILES: ACORDEÓN EN MÓVIL ═══════
            En el móvil la ventana se parte en secciones plegables (perfiles,
            parámetros, visualización y reglas) para que no haya que recorrer una
-           columna larguísima; en escritorio se ven todas abiertas, como PSeInt. */
+           columna larguísima; en escritorio se ven todas abiertas, como PSeInt.
+
+           Clave: los envoltorios de las secciones NO participan del diseño
+           (`display: contents`). Así el contenido queda colocado exactamente
+           donde estaba en escritorio —la lista es hija directa de su columna y
+           se desplaza por dentro— y en móvil basta con plegar o desplegar. Al no
+           encogerse por debajo de su contenido, nada se solapa. */
+        #profileModal .acc-section,
+        #profileModal .acc-body { display: contents; }
         #profileModal .acc-head { display: none; }
         #profileModal .acc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         #profileModal .acc-hint {
@@ -927,13 +935,13 @@
         }
         #profileModal .acc-chevron { flex-shrink: 0; transition: transform 0.18s ease; }
 
-        /* Escritorio: todo desplegado y el ancho de la ventana intacto */
+        /* Escritorio: el separador que antes iba en el envoltorio del grupo */
         @media (min-width: 768px) {
-            #profileModal .acc-section { display: flex; flex-direction: column; min-height: 0; }
-            #profileModal .acc-section.acc-grow { flex: 1 1 auto; }
-            #profileModal .acc-section.acc-fixed { flex-shrink: 0; }
-            #profileModal .acc-body { display: flex; flex-direction: column; min-height: 0; }
-            #profileModal .acc-section.acc-grow .acc-body { flex: 1 1 auto; }
+            #profileModal .acc-divider {
+                border-top: 1px solid var(--border-color);
+                margin-top: 4px;
+                padding-top: 10px;
+            }
         }
 
         /* Móvil: acordeón táctil */
@@ -964,12 +972,9 @@
                 letter-spacing: 0;
                 color: var(--text-faint);
             }
-            #profileModal .acc-body { display: none; padding-top: 10px; }
-            #profileModal .acc-section.is-open .acc-body {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
+            /* Plegado: se esconde el contenido; desplegado: vuelve al flujo */
+            #profileModal .acc-body { display: none; }
+            #profileModal .acc-section.is-open .acc-body { display: contents; }
             #profileModal .acc-section.is-open .acc-head {
                 border-color: var(--pseint-blue);
                 background-color: var(--bg-active);
@@ -977,43 +982,36 @@
             }
             #profileModal .acc-section.is-open .acc-chevron { transform: rotate(180deg); }
 
-            /* Dentro del acordeón los separadores de escritorio sobran */
-            #profileModal .acc-body {
-                border-top: none !important;
-                margin-top: 0 !important;
-            }
-
-            /* La sección abierta se queda con el espacio que sobra y sus listas se
-               desplazan por dentro. Si no sobra espacio, la lista conserva un
-               mínimo y la columna se desplaza: nunca se queda en blanco. */
-            #profileModal .acc-section { display: flex; flex-direction: column; min-height: 0; flex-shrink: 0; }
-            #profileModal .acc-list.is-open { flex: 1 1 auto; }
-            #profileModal .acc-list.is-open .acc-body { flex: 1 1 auto; min-height: 0; }
-            #profileModal #presetListContainer { min-height: 132px; max-height: 44vh; }
-            #profileModal #profileCheckboxesList { min-height: 120px; max-height: 46vh; }
-
-            /* En el móvil la ventana se aprovecha entera y se quitan los textos
-               que ya repiten las cabeceras (el buscador ya tiene su pista). */
+            /* La ventana aprovecha toda la pantalla y se quitan los textos que ya
+               repiten las cabeceras (el buscador ya tiene su propia pista). */
             #profileModal > div { max-height: 96vh; }
-            #profileModal #colPerfiles { gap: 8px; padding: 12px; }
+            #profileModal #colPerfiles {
+                background-color: var(--bg-panel) !important;
+                border-right: none !important;
+                gap: 8px;
+                padding: 12px;
+            }
+            #profileModal #colReglas { flex: 0 0 auto; gap: 8px; padding: 12px; }
             #profileModal #presetIntroLabel,
             #profileModal #presetCountLabel { display: none; }
+
+            /* La lista se queda con el alto libre y se desplaza por dentro; con un
+               mínimo para que nunca aparezca en blanco en pantallas bajas. */
+            #profileModal #presetListContainer { flex: 1 1 0%; min-height: 132px; max-height: none; }
+            #profileModal #profileCheckboxesList { flex: 1 1 0%; min-height: 120px; max-height: none; }
         }
 
-        /* En navegadores con :has() la columna que tiene la sección abierta se
-           queda con todo el alto libre y su lista se desplaza por dentro: el
-           diálogo cabe entero en la pantalla, sin recorrerlo de arriba abajo. */
+        /* Con :has(), la columna que contiene la sección abierta se queda con el
+           alto libre (y se desplaza sola si aun así no cabe); sin :has() la
+           ventana entera se desplaza, que también es correcto. */
         @supports selector(:has(*)) {
             @media (max-width: 767px) {
-                #profileModal #colPerfiles,
-                #profileModal #colReglas { flex: 0 0 auto; min-height: 0; }
                 #profileModal #colPerfiles:has(.acc-list.is-open),
                 #profileModal #colReglas:has(.acc-list.is-open) {
                     flex: 1 1 auto;
+                    min-height: 0;
                     overflow-y: auto;
                 }
-                #profileModal #presetListContainer,
-                #profileModal #profileCheckboxesList { max-height: none; }
             }
         }
 
@@ -1514,7 +1512,7 @@
                      style="background-color: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
 
                     <!-- Sección 1: perfiles oficiales (abierta por defecto también en móvil) -->
-                    <div class="acc-section acc-grow acc-list is-open">
+                    <div class="acc-section acc-list is-open">
                         <button type="button" class="acc-head" aria-expanded="true" onclick="toggleProfileAccordion(this)">
                             <span class="acc-title">Perfiles oficiales</span>
                             <span class="flex items-center gap-2 min-w-0">
@@ -1522,7 +1520,7 @@
                                 <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                             </span>
                         </button>
-                        <div class="acc-body flex flex-col gap-2.5">
+                        <div class="acc-body">
                             <label id="presetIntroLabel" class="text-[11px] font-medium" style="color: var(--text-muted);">
                                 Busque entre los perfiles e instituciones oficiales de PSeInt:
                             </label>
@@ -1541,13 +1539,13 @@
                     </div>
 
                     <!-- Sección 2: parámetros de generación -->
-                    <div class="acc-section acc-fixed">
+                    <div class="acc-section">
                         <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
                             <span class="acc-title">Parámetros de respuesta</span>
                             <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                         </button>
-                        <div class="acc-body flex flex-col gap-2 pt-2.5 mt-1" style="border-top: 1px solid var(--border-color);">
-                            <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
+                        <div class="acc-body">
+                            <div class="acc-divider text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
                                 Parámetros de Respuesta
                             </div>
                             <div>
@@ -1572,13 +1570,13 @@
                     </div>
 
                     <!-- Sección 3: visualización -->
-                    <div class="acc-section acc-fixed">
+                    <div class="acc-section">
                         <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
                             <span class="acc-title">Visualización</span>
                             <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                         </button>
-                        <div class="acc-body flex flex-col gap-1.5 pt-2.5 mt-1" style="border-top: 1px solid var(--border-color);">
-                            <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
+                        <div class="acc-body">
+                            <div class="acc-divider text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
                                 Visualización
                             </div>
                             <label class="flex items-start gap-2 text-xs cursor-pointer" style="color: var(--text-main);"
@@ -1605,7 +1603,7 @@
 
                 <!-- Columna derecha: Las 24 reglas oficiales de PSeInt con casillas de verificación -->
                 <div id="colReglas" class="flex-1 p-4 flex flex-col min-h-0 overflow-hidden">
-                    <div class="acc-section acc-grow acc-list">
+                    <div class="acc-section acc-list">
                         <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
                             <span class="acc-title">Reglas sintácticas</span>
                             <span class="flex items-center gap-2 min-w-0">
@@ -1613,7 +1611,7 @@
                                 <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
                             </span>
                         </button>
-                        <div class="acc-body flex flex-col min-h-0">
+                        <div class="acc-body">
                             <div class="flex items-center justify-between gap-2 pb-2 mb-2" style="border-bottom: 1px solid var(--border-color);">
                                 <div>
                                     <h3 class="text-xs font-bold uppercase tracking-wide" style="color: var(--pseint-blue);">
@@ -4692,12 +4690,16 @@
             if (!section) return;
             const abrir = !section.classList.contains('is-open');
             // En móvil se despliega una sección a la vez, así todo cabe sin
-            // recorrer la ventana arriba y abajo.
-            if (abrir && window.matchMedia('(max-width: 767px)').matches) {
+            // recorrer la ventana arriba y abajo, y siempre queda una abierta.
+            if (window.matchMedia('(max-width: 767px)').matches) {
                 const modal = section.closest('#profileModal') || document;
-                modal.querySelectorAll('.acc-section.is-open').forEach(otra => {
-                    if (otra !== section) ponerSeccionPerfil(otra, false);
-                });
+                if (abrir) {
+                    modal.querySelectorAll('.acc-section.is-open').forEach(otra => {
+                        if (otra !== section) ponerSeccionPerfil(otra, false);
+                    });
+                } else if (modal.querySelectorAll('.acc-section.is-open').length <= 1) {
+                    return;
+                }
             }
             ponerSeccionPerfil(section, abrir);
         };
