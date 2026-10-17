@@ -95,6 +95,44 @@ repositorio de PSeInt) y compara la salida del motor con los `.out` oficiales.
 Indica esa carpeta con `PSEINT_TEST_INTERP`; con `--real <caso>` se ejecuta el
 `pseint.exe` instalado para comprobar un caso concreto.
 
+## El motor y los perfiles
+
+El perfil de lenguaje activo entra al motor igual que en PSeInt: la consola, la
+verificacion previa, el analisis y los diagramas reciben sus 24 opciones.
+
+Estas son las que cambian de verdad el comportamiento (comprobadas una por una
+contra `pseint.exe`):
+
+    obligar_definir      sin_inicializar      indices_base0
+    palabras_yono        omitir_paso_menos1   asignar_igual
+    proteger_contador    redimensionar        funciones_subproc
+    funciones_cadena     concat_mas           acentos_nombres
+    variacion_mq         diagramas_ns
+
+Las que en PSeInt son validacion estatica no bloquean la ejecucion: el motor
+acepta codigo sin `;` aunque `controlar_pc` este activo, `Si` sin `Entonces`
+aunque `sintaxis_flexible` este apagado, condiciones coloquiales (`x ES PAR`)
+aunque `coloquial` este apagado, `Segun` con etiquetas de texto aunque
+`segun_numerico` este activo, y dimensiones calculadas (`Dimension v[n]`) aunque
+`vars_dimension` este apagado. La idea es ejecutar antes que rechazar: el codigo
+del alumno corre en la consola y la verificacion previa ya devuelve al modelo los
+errores de verdad.
+
+Dos apartes, a proposito:
+
+- `redimensionar`: el PSeInt de escritorio ignora `allow_resize_arrays`; el motor
+  si lo respeta, igual que la correccion que aplica el port nativo. Esta anotado
+  como diferencia conocida en `dev/test_pseint_interp.js`.
+- `acentos_nombres`: con la opcion apagada, PSeInt rechaza el nombre acentuado al
+  declararlo, asignarlo, leerlo o dimensionarlo, pero lo tolera en una lectura
+  suelta (`Escribir año` imprime vacio). El motor lo rechaza siempre, para que
+  ningun nombre que el perfil prohibe pase en silencio.
+
+`formas_alt_le`, `preferir_algoritmo`, `preferir_funcion` y `preferir_mq` no
+cambian la ejecucion: son preferencias del editor. Las dos primeras si se usan al
+redactar el pedido al modelo. `para_cada` no se comprueba porque el PSeInt de
+escritorio tambien acepta `Para Cada` con la opcion apagada.
+
 ## Estructura
 
     index.html           Interfaz completa: HTML, CSS y JavaScript en un archivo

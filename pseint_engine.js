@@ -17,7 +17,15 @@ var ACCENTS = { 'á':'a','é':'e','í':'i','ó':'o','ú':'u','ü':'u','ñ':'n',
 
 function stripAccents(s) { return String(s).replace(/[áéíóúüñÁÉÍÓÚÜÑ]/g, function (c) { return ACCENTS[c] || c; }); }
 
-function canon(s, allowAccents) { return (allowAccents === false ? stripAccents(s) : String(s)).toUpperCase(); }
+/* ¿El nombre lleva algún carácter acentuado? */
+var HAS_ACCENT = /[áéíóúüñÁÉÍÓÚÜÑ]/;
+
+/* Los identificadores conservan sus acentos: en PSeInt `año` y `anio` son dos
+   variables distintas (comprobado con pseint.exe, con la opción encendida y
+   apagada). La opción del perfil (allow_accents) solo decide si se admiten
+   nombres con acentos; si está apagada, el nombre es un error de sintaxis y lo
+   informa el analizador antes de empezar. */
+function canon(s) { return String(s).toUpperCase(); }
 
 /* Formato de números idéntico a PSeInt (sprintf "%.10f" y recorte de ceros) */
 function fmtNum(x) {
@@ -242,7 +250,22 @@ function Parser(code, rules) {
   this.wordOps = this.rules.palabras_yono !== false;
   this.lines = preprocess(code);
   for (var i = 0; i < this.lines.length; i++) {
-    this.lines[i].toks = mergeMultiwords(lex(this.lines[i].text), this.allowAccents);
+    var toksLinea = lex(this.lines[i].text);
+    // PSeInt con allow_accents=0 rechaza los nombres acentuados al declararlos,
+    // asignarlos, leerlos o dimensionarlos (SynError 48/86/65/60) y también las
+    // palabras clave acentuadas (`según`: SynError 43). En cambio, en una lectura
+    // suelta (`Escribir año`) PSeInt no se queja y la imprime vacía. Aquí se
+    // rechaza en todos los contextos: es una diferencia a propósito en el lado
+    // seguro (un nombre que el perfil prohíbe nunca pasa en silencio).
+    if (!this.allowAccents) {
+      for (var ta = 0; ta < toksLinea.length; ta++) {
+        if (toksLinea[ta].t === 'id' && HAS_ACCENT.test(toksLinea[ta].v)) {
+          throw new PseintError('No se permiten acentos en los nombres (el perfil los tiene desactivados).',
+                                this.lines[i].line);
+        }
+      }
+    }
+    this.lines[i].toks = mergeMultiwords(toksLinea, this.allowAccents);
   }
   // Nombres de funciones y subprocesos: PSeInt admite separar el nombre del
   // paréntesis (`c <- trunc (a/b)`), así que hay que saber cuáles son funciones.
@@ -931,17 +954,19 @@ Parser.prototype.parseExprState = function (st, minPrec) {
     var op = this.peekBinOp(st);
     if (!op || op.prec < minPrec) break;
     st.pos += op.len;
-    if (op.postfix) { left = this.makeBin(op, left, null); continue; }
+    if (op.postfix) { left = this.makeBin(op, left, null, st.line); continue; }
     var nextMin = (op.op === '^') ? op.prec : op.prec + 1;
     var right = this.parseExprState(st, nextMin);
-    left = this.makeBin(op, left, right);
+    left = this.makeBin(op, left, right, st.line);
   }
   return left;
 };
 
-Parser.prototype.makeBin = function (op, a, b) {
-  var node = { t: 'bin', op: op.op, a: a, b: b };
-  return op.negate ? { t: 'un', op: '~', a: node } : node;
+Parser.prototype.makeBin = function (op, a, b, line) {
+  // El nodo guarda su línea para que los errores de la operación (`División por
+  // cero`, concatenación no permitida) la informen, igual que las llamadas.
+  var node = { t: 'bin', op: op.op, a: a, b: b, line: line };
+  return op.negate ? { t: 'un', op: '~', a: node, line: line } : node;
 };
 
 Parser.prototype.parseUnary = function (st) {
@@ -1753,12 +1778,12 @@ Interpreter.prototype.callBuiltin = async function (call, line) {
     }
     case 'FECHAACTUAL': { var d = new Date(); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); }
     case 'HORAACTUAL': { var h = new Date(); return h.getHours() * 10000 + h.getMinutes() * 100 + h.getSeconds(); }
-    case 'LONGITUD': this.needStr(); return String(toStr(A[0])).length;
-    case 'CONCATENAR': this.needStr(); return toStr(A[0]) + toStr(A[1]);
-    case 'MAYUSCULAS': case 'MAYÚSCULAS': this.needStr(); return toStr(A[0]).toUpperCase();
-    case 'MINUSCULAS': case 'MINÚSCULAS': this.needStr(); return toStr(A[0]).toLowerCase();
+    case 'LONGITUD': this.needStr(line); return String(toStr(A[0])).length;
+    case 'CONCATENAR': this.needStr(line); return toStr(A[0]) + toStr(A[1]);
+    case 'MAYUSCULAS': case 'MAYÚSCULAS': this.needStr(line); return toStr(A[0]).toUpperCase();
+    case 'MINUSCULAS': case 'MINÚSCULAS': this.needStr(line); return toStr(A[0]).toLowerCase();
     case 'SUBCADENA': {
-      this.needStr();
+      this.needStr(line);
       var s = toStr(A[0]); var l = s.length;
       var f = toInt(A[1]), tt = toInt(A[2]);
       if (!this.rules.indices_base0) { f--; tt--; }
@@ -1767,15 +1792,15 @@ Interpreter.prototype.callBuiltin = async function (call, line) {
       if (tt < f) return '';
       return s.substring(f, tt + 1);
     }
-    case 'CONVERTIRANUMERO': case 'CONVERTIRANÚMERO': this.needStr(); return parseFloat(toStr(A[0])) || 0;
-    case 'CONVERTIRATEXTO': this.needStr(); return toStr(A[0]);
+    case 'CONVERTIRANUMERO': case 'CONVERTIRANÚMERO': this.needStr(line); return parseFloat(toStr(A[0])) || 0;
+    case 'CONVERTIRATEXTO': this.needStr(line); return toStr(A[0]);
     default:
       throw new PseintError('La función "' + call.name + '" no existe.', line);
   }
 };
 
-Interpreter.prototype.needStr = function () {
-  if (this.rules.funciones_cadena === false) throw new PseintError('El perfil no habilita las funciones de cadena.', 0);
+Interpreter.prototype.needStr = function (line) {
+  if (this.rules.funciones_cadena === false) throw new PseintError('El perfil no habilita las funciones de cadena.', line);
 };
 
 /* ═════════════════════════════ API pública ═════════════════════════════ */
