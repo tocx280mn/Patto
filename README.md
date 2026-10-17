@@ -14,6 +14,10 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
   `Escribir`.
 - Antes de responder, ejecuta el pseudocodigo con el motor y, si da error, se lo
   devuelve al modelo para que lo corrija. Se apaga en Configuracion.
+- Lo prueba con 10 juegos de datos de relleno (menus, ceros, negativos...) para
+  recorrer distintas ramas. Si con unos datos va bien y con otros falla, se le pide
+  al modelo que revise esa rama y, si no la arregla, el algoritmo se entrega con el
+  aviso "Ejecutado con avisos" diciendo con que datos y en que linea falla.
 - El resultado de esa ejecucion (salida, error y linea) viaja en el historial, asi
   que Patto sabe que ha ejecutado el codigo y puede contarte que salio en vez de
   responder que no ejecuta nada.
@@ -123,16 +127,25 @@ contra `pseint.exe`):
     palabras_yono        omitir_paso_menos1   asignar_igual
     proteger_contador    redimensionar        funciones_subproc
     funciones_cadena     concat_mas           acentos_nombres
-    variacion_mq         diagramas_ns
+    variacion_mq         diagramas_ns         controlar_pc
+    sintaxis_flexible    coloquial            vars_dimension
 
-Las que en PSeInt son validacion estatica no bloquean la ejecucion: el motor
-acepta codigo sin `;` aunque `controlar_pc` este activo, `Si` sin `Entonces`
-aunque `sintaxis_flexible` este apagado, condiciones coloquiales (`x ES PAR`)
-aunque `coloquial` este apagado, `Segun` con etiquetas de texto aunque
-`segun_numerico` este activo, y dimensiones calculadas (`Dimension v[n]`) aunque
-`vars_dimension` este apagado. La idea es ejecutar antes que rechazar: el codigo
-del alumno corre en la consola y la verificacion previa ya devuelve al modelo los
-errores de verdad.
+De las cinco que en PSeInt son validacion estatica, cuatro tambien las comprueba
+el motor cuando el perfil las exige, porque el PSeInt de escritorio rechaza el
+codigo que no las cumple (verificado con `pseint.exe`, error entre parentesis):
+
+- `controlar_pc`: `;` al final de cada sentencia secuencial (SynError 38), tambien
+  dentro de un `Si`, un `Para` o un `Mientras`.
+- `sintaxis_flexible` apagada: comas en `Escribir`/`Leer` (SynError 54 y 65) y
+  `Entonces`/`Hacer` obligatorios (SynError 32, 71, 97 y 102).
+- `coloquial` apagado: sin `Es Mayor Que`, `Es Par`, `Es Multiplo De`...
+  (SynError 92).
+- `vars_dimension` apagado: `Dimension v[n]` solo con numeros, `v[2*3]` vale y
+  `v[n]` no (SynError 153).
+
+Asi lo que Patto da por ejecutado tambien compila en el PSeInt de escritorio con
+ese mismo perfil. `segun_numerico` se comprueba al ejecutar (el `Segun` con
+variable de texto da error), no al analizar.
 
 Dos apartes, a proposito:
 

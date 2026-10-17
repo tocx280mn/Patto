@@ -197,7 +197,9 @@ function preprocess(code) {
       if (ch === '/' && text.charAt(p + 1) === '/') { cut = p; break; }
     }
     if (cut >= 0) text = text.slice(0, cut);
-    // separar por ';' de nivel superior
+    // separar por ';' de nivel superior. Cada segmento recuerda si terminó en ';':
+    // con la opción "Controlar el uso de ;" (force_semicolon) PSeInt exige ese ';'
+    // al final de cada sentencia secuencial y hay que poder comprobarlo.
     var segs = [], depth = 0, cur = '', inS = null;
     for (var q = 0; q < text.length; q++) {
       var c2 = text.charAt(q);
@@ -205,13 +207,13 @@ function preprocess(code) {
       if (c2 === '"' || c2 === "'") { inS = c2; cur += c2; continue; }
       if (c2 === '(' || c2 === '[') depth++;
       if (c2 === ')' || c2 === ']') depth--;
-      if (c2 === ';' && depth <= 0) { segs.push(cur); cur = ''; continue; }
+      if (c2 === ';' && depth <= 0) { segs.push({ text: cur, semi: true }); cur = ''; continue; }
       cur += c2;
     }
-    segs.push(cur);
+    segs.push({ text: cur, semi: false });
     for (var si = 0; si < segs.length; si++) {
-      if (segs[si].trim() === '') continue;
-      lines.push({ text: segs[si], line: li + 1 });
+      if (segs[si].text.trim() === '') continue;
+      lines.push({ text: segs[si].text, line: li + 1, semi: segs[si].semi });
     }
   }
   return lines;
@@ -248,6 +250,16 @@ function Parser(code, rules) {
   // ¿El perfil permite las palabras Y, O, NO y MOD? Si no, PSeInt las trata como
   // identificadores normales y `a > 0 Y b < 5` es un error de sintaxis.
   this.wordOps = this.rules.palabras_yono !== false;
+  /* Estas cuatro opciones solo cambian la validación ESTÁTICA de PSeInt (no lo que
+     hace el programa al ejecutarse), pero PSeInt sí rechaza el código cuando el
+     perfil las exige. El motor las aplica para que lo que Patto da por verificado
+     no falle después al copiarlo en PSeInt (comprobado con pseint.exe opción por
+     opción: SynError 38, 32/54/65/71/97/102, 92 y 153). */
+  this.pidePuntoYComa = this.rules.controlar_pc === true;
+  this.sintaxisEstricta = this.rules.sintaxis_flexible === false;
+  this.prohibeColoquial = this.rules.coloquial === false;
+  this.dimensionFija = this.rules.vars_dimension === false;
+  this.semiActual = false;   // ¿la sentencia en curso terminaba en ';'?
   this.lines = preprocess(code);
   for (var i = 0; i < this.lines.length; i++) {
     var toksLinea = lex(this.lines[i].text);
@@ -300,8 +312,57 @@ Parser.prototype.kw = function (tk) {
 Parser.prototype.tokensAt = function (i) { return this.lines[i] ? this.lines[i].toks : []; };
 Parser.prototype.curLine = function () { return this.lines[this.i] ? this.lines[this.i].line : 0; };
 Parser.prototype.pushBack = function (toks, line) {
-  this.lines.splice(this.i, 0, { text: tokensToText(toks), line: line, toks: toks });
+  this.lines.splice(this.i, 0, { text: tokensToText(toks), line: line, toks: toks,
+                                 semi: this.semiActual });
 };
+
+/* Con "Controlar el uso de ;" (force_semicolon) PSeInt exige un ';' al final de
+   cada sentencia secuencial — Escribir, Leer, asignaciones, Definir, Dimension,
+   limpiar pantalla, esperas, llamadas... (SynError 38) — también si la sentencia
+   va en la misma línea que un `Si ... Entonces`. Las cabeceras y los cierres de
+   estructura (Si/FinSi, Repetir/Hasta Que, etc.) no lo llevan. */
+Parser.prototype.exigeSemi = function (line) {
+  if (this.pidePuntoYComa && !this.semiActual) {
+    throw new PseintError('Se esperaba ";" al final de la sentencia: el perfil exige ";" en cada instrucción.',
+                          line);
+  }
+};
+
+/* ¿Está la palabra que cierra la cabecera (Entonces/Hacer)? Con la "sintaxis
+   flexible" desactivada es obligatoria (SynError 32/71/97/102). Se admite también
+   al comienzo de la línea siguiente: PSeInt lo acepta para `Entonces`. */
+Parser.prototype.tieneCierre = function (rest, kws) {
+  for (var i = 0; i < rest.length; i++) if (kws.indexOf(this.kw(rest[i])) >= 0) return true;
+  var prox = this.lines[this.i + 1];
+  if (prox && prox.toks && prox.toks.length && kws.indexOf(this.kw(prox.toks[0])) >= 0) return true;
+  return false;
+};
+
+/* Comas de nivel superior (las de dentro de paréntesis o corchetes no cuentan:
+   `Escribir CONCATENAR(a, b)` lleva una sola expresión). */
+function comasNivelSuperior(toks) {
+  var depth = 0, n = 0;
+  for (var i = 0; i < toks.length; i++) {
+    var t = toks[i];
+    if (t.t !== 'op') continue;
+    if (t.v === '(' || t.v === '[') depth++;
+    else if (t.v === ')' || t.v === ']') depth--;
+    else if (t.v === ',' && depth <= 0) n++;
+  }
+  return n;
+}
+
+/* ¿El tamaño de un arreglo es un número (o una cuenta con números)? Con
+   "Permitir utilizar variables para dimensionar arreglos" apagado PSeInt solo
+   admite valores constantes: `Dimension v[3]` y `v[2*3]` valen, `v[n]` no
+   (SynError 153). */
+function esDimensionConstante(node) {
+  if (!node) return true;
+  if (node.t === 'num') return true;
+  if (node.t === 'bin') return esDimensionConstante(node.a) && esDimensionConstante(node.b);
+  if (node.t === 'un') return esDimensionConstante(node.a);
+  return false;
+}
 
 function tokensToText(toks) {
   return toks.map(function (t) { return t.t === 'str' ? ('"' + t.v + '"') : (t.t === 'num' ? String(t.v) : String(t.v)); }).join(' ');
@@ -403,6 +464,10 @@ var PARSER_CLOSERS = ['FINSI', 'FINMIENTRAS', 'FINPARA', 'FINSENGUN', 'FINSEGUN'
 Parser.prototype.parseStatement = function () {
   var toks = this.tokensAt(this.i);
   var line = this.curLine();
+  // Se recuerda si esta "línea lógica" traía ';' final: lo comprueban las
+  // sentencias secuenciales cuando el perfil lo exige (exigeSemi) y lo heredan
+  // las sentencias que van en la misma línea tras `Si ... Entonces`.
+  this.semiActual = !!(this.lines[this.i] && this.lines[this.i].semi);
   var k = this.kw(toks[0]);
   // Un cierre que no corresponde a ninguna estructura abierta: mensaje claro en
   // lugar de un confuso "la función X no existe".
@@ -416,8 +481,8 @@ Parser.prototype.parseStatement = function () {
     case 'ESCRIBIR': case 'MOSTRAR': case 'IMPRIMIR': case 'INFORMAR':
       return this.parseEscribir(toks, line);
     case 'LEER': return this.parseLeer(toks, line);
-    case 'LIMPIARPANTALLA': case 'BORRARPANTALLA': this.i++; return { t: 'limpiar', line: line };
-    case 'ESPERARTECLA': this.i++; return { t: 'esperartecla', line: line };
+    case 'LIMPIARPANTALLA': case 'BORRARPANTALLA': this.exigeSemi(line); this.i++; return { t: 'limpiar', line: line };
+    case 'ESPERARTECLA': this.exigeSemi(line); this.i++; return { t: 'esperartecla', line: line };
     case 'ESPERAR': return this.parseEsperar(toks, line);
     case 'SI': return this.parseSi(toks, line);
     case 'SEGUN': return this.parseSegun(toks, line);
@@ -425,7 +490,7 @@ Parser.prototype.parseStatement = function () {
     case 'REPETIR': return this.parseRepetir(toks, line);
     case 'PARA': return this.parsePara(toks, line);
     case 'PARACADA': return this.parseParaCada(toks, line);
-    default: { var st = this.parseSimple(toks, line); this.i++; return st; }
+    default: { var st = this.parseSimple(toks, line); this.exigeSemi(line); this.i++; return st; }
   }
 };
 
@@ -446,6 +511,7 @@ Parser.prototype.parseDefinir = function (toks, line) {
     if (item) { item.tipo = tipo; names.push(item); }
   }
   if (!names.length) throw new PseintError('Definir sin variables.', line);
+  this.exigeSemi(line);
   this.i++;
   return { t: 'def', names: names, line: line };
 };
@@ -483,8 +549,17 @@ Parser.prototype.parseDimension = function (toks, line) {
       dims = this.parseExprList(t.slice(2, cl), line);
     }
     if (!dims.length) throw new PseintError('Dimensionamiento sin tamaño para ' + name + '.', line);
+    if (this.dimensionFija) {
+      for (var d = 0; d < dims.length; d++) {
+        if (!esDimensionConstante(dims[d])) {
+          throw new PseintError('El perfil no permite dimensionar con variables: el tamaño de ' +
+            name + ' tiene que ser un número.', line);
+        }
+      }
+    }
     items.push({ name: name, canon: canon(name, this.allowAccents), dims: dims });
   }
+  this.exigeSemi(line);
   this.i++;
   return { t: 'dim', redim: redim, items: items, line: line };
 };
@@ -498,6 +573,12 @@ Parser.prototype.parseEscribir = function (toks, line) {
     clean.push(t[i]);
   }
   var exprs = this.parseExprList(clean, line);
+  // Con la "sintaxis flexible" desactivada PSeInt exige comas entre los valores
+  // (`Escribir "a", 5`; `Escribir "a" 5` es SynError 54).
+  if (this.sintaxisEstricta && exprs.length > 1 && comasNivelSuperior(clean) < exprs.length - 1) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: separa con comas los valores de Escribir.', line);
+  }
+  this.exigeSemi(line);
   this.i++;
   return { t: 'escribir', exprs: exprs, saltar: saltar, line: line };
 };
@@ -514,6 +595,11 @@ Parser.prototype.parseLeer = function (toks, line) {
     p = lv.next;
   }
   if (!targets.length) throw new PseintError('Leer sin variables.', line);
+  // Sin sintaxis flexible las variables también se separan con comas (SynError 65).
+  if (this.sintaxisEstricta && targets.length > 1 && comasNivelSuperior(t) < targets.length - 1) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: separa con comas las variables de Leer.', line);
+  }
+  this.exigeSemi(line);
   this.i++;
   return { t: 'leer', targets: targets, line: line };
 };
@@ -529,6 +615,7 @@ Parser.prototype.parseEsperar = function (toks, line) {
     if (k === 'MILISEGUNDOS' || k === 'MILISEGUNDO') { unit = 'ms'; cut = i; break; }
   }
   var expr = this.parseExpr(rest.slice(0, cut), line);
+  this.exigeSemi(line);
   this.i++;
   return { t: 'esperar', expr: expr, unit: unit, line: line };
 };
@@ -545,12 +632,15 @@ Parser.prototype.splitCondition = function (rest, line, terminators) {
     try {
       var node = this.parseExprState(st, 0);
       if (node && st.pos === n) return { cond: node, tail: toks.slice(n) };
-    } catch (e) { /* se prueba un prefijo más corto */ }
+    } catch (e) { if (e && e.definitivo) throw e; /* se prueba un prefijo más corto */ }
   }
   throw new PseintError('No se reconoce la condición.', line);
 };
 
 Parser.prototype.parseSi = function (toks, line) {
+  if (this.sintaxisEstricta && !this.tieneCierre(toks.slice(1), ['ENTONCES'])) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: falta el "Entonces" del Si.', line);
+  }
   var split = this.splitCondition(toks.slice(1), line, ['ENTONCES']);
   var cond = split.cond;
   this.i++;
@@ -575,6 +665,9 @@ Parser.prototype.parseSi = function (toks, line) {
 };
 
 Parser.prototype.parseMientras = function (toks, line) {
+  if (this.sintaxisEstricta && !this.tieneCierre(toks.slice(1), ['HACER'])) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: falta el "Hacer" del Mientras.', line);
+  }
   var split = this.splitCondition(toks.slice(1), line, ['HACER']);
   var cond = split.cond;
   this.i++;
@@ -599,6 +692,9 @@ Parser.prototype.parseRepetir = function (toks, line) {
 };
 
 Parser.prototype.parsePara = function (toks, line) {
+  if (this.sintaxisEstricta && !this.tieneCierre(toks.slice(1), ['HACER'])) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: falta el "Hacer" del Para.', line);
+  }
   var rest = toks.slice(1);
   if (rest.length && this.kw(rest[rest.length - 1]) === 'HACER') rest = rest.slice(0, -1);
   if (rest.length && (this.kw(rest[0]) === 'CADA')) return this.parseParaCada(toks, line, true);
@@ -636,6 +732,9 @@ Parser.prototype.parsePara = function (toks, line) {
 };
 
 Parser.prototype.parseParaCada = function (toks, line, alreadySplit) {
+  if (this.sintaxisEstricta && !this.tieneCierre(toks.slice(1), ['HACER'])) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: falta el "Hacer" del Para Cada.', line);
+  }
   var rest = toks.slice(1);
   if (rest.length && this.kw(rest[rest.length - 1]) === 'HACER') rest = rest.slice(0, -1);
   if (rest.length && this.kw(rest[0]) === 'CADA') rest = rest.slice(1);
@@ -654,6 +753,9 @@ Parser.prototype.parseParaCada = function (toks, line, alreadySplit) {
 };
 
 Parser.prototype.parseSegun = function (toks, line) {
+  if (this.sintaxisEstricta && !this.tieneCierre(toks.slice(1), ['HACER'])) {
+    throw new PseintError('El perfil no usa la sintaxis flexible: falta el "Hacer" del Segun.', line);
+  }
   var rest = toks.slice(1);
   if (rest.length && this.kw(rest[rest.length - 1]) === 'HACER') rest = rest.slice(0, -1);
   var expr = this.parseExpr(rest, line);
@@ -912,6 +1014,17 @@ Parser.prototype.matchWordSeq = function (toks, pos, seq) {
   return true;
 };
 
+/* Con las condiciones coloquiales prohibidas PSeInt no acepta `Es Mayor Que`,
+   `Es Par`, `Es Múltiplo De`... (SynError 92): hay que usar >, <, =, <>, %. */
+Parser.prototype.exigeNoColoquial = function () {
+  if (this.prohibeColoquial) {
+    var e = new PseintError('El perfil no permite condiciones en lenguaje coloquial («Es Mayor Que», «Es Par»...): usa los operadores simbólicos (>, <, =, <>, %).',
+                            this.curLine());
+    e.definitivo = true;   // no lo tape el tanteo de prefijos de splitCondition
+    throw e;
+  }
+};
+
 Parser.prototype.peekBinOp = function (st) {
   var tk = st.toks[st.pos];
   if (!tk) return null;
@@ -929,6 +1042,7 @@ Parser.prototype.peekBinOp = function (st) {
       for (var j = 0; j < COLOQ.length; j++) {
         var sq = COLOQ[j].seq;
         if (this.matchWordSeq(st.toks, st.pos + 1, sq)) {
+          this.exigeNoColoquial();
           return { op: COLOQ[j].op, prec: precDeOp(COLOQ[j].op), len: 1 + sq.length, kind: 'bin', postfix: !!COLOQ[j].postfix, negate: true };
         }
       }
@@ -940,7 +1054,7 @@ Parser.prototype.peekBinOp = function (st) {
           var t = st.toks[st.pos + s];
           if (!t || t.t !== 'id' || keyWord(t.v) !== seq[s]) { ok = false; break; }
         }
-        if (ok) return { op: COLOQ[i].op, prec: precDeOp(COLOQ[i].op), len: seq.length, kind: 'bin', postfix: !!COLOQ[i].postfix };
+        if (ok) { this.exigeNoColoquial(); return { op: COLOQ[i].op, prec: precDeOp(COLOQ[i].op), len: seq.length, kind: 'bin', postfix: !!COLOQ[i].postfix }; }
       }
     }
   }

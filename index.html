@@ -2192,7 +2192,7 @@
                de mostrar la respuesta. Aquí se le dice, y además el resultado real de
                cada ejecución viaja en el historial (ver textoEjecucionMotor). */
             const motorRule = verifyCodeEnabled
-                ? '5. EJECUCIÓN REAL (no lo niegues): Patto lleva dentro un motor de PSeInt que ejecuta el pseudocódigo. Con la opción "Ejecutar y corregir el código" activada —es el caso ahora— CADA bloque ```pseint``` que entregas se ejecuta con ese motor en cuanto lo escribes, con datos de relleno; si da error, se te devuelve el error y lo arreglas antes de que el usuario lo vea. Por eso NUNCA digas que no puedes ejecutar código, que no tienes un entorno de PSeInt, que no puedes probarlo o que solo lo revisas "a mano": sí lo ejecutas y lo pruebas. Cuando en el historial veas en uno de tus mensajes una nota entre corchetes que empieza por "[Motor de PSeInt:", esa es la ejecución REAL de ese código: úsala tal cual para responder ("lo ejecuté y terminó sin errores; salida: ...", "dio error en la línea 12: ..."), sin inventar nada.'
+                ? '5. EJECUCIÓN REAL (no lo niegues): Patto lleva dentro un motor de PSeInt que ejecuta el pseudocódigo. Con la opción "Ejecutar y corregir el código" activada —es el caso ahora— CADA bloque ```pseint``` que entregas se ejecuta con ese motor en cuanto lo escribes, varias veces y con distintos juegos de datos de relleno (así se recorren menús y casos límite); si da error, o si con unos datos va bien y con otros no, se te devuelve el fallo y lo arreglas antes de que el usuario lo vea. El motor aplica además las reglas estáticas del perfil activo (punto y coma obligatorio, comas en Escribir/Leer, condiciones coloquiales, dimensionar arreglos con variables...): si tu código no las cumple, el motor lo rechaza igual que el PSeInt de escritorio y tendrás que corregirlo. Por eso NUNCA digas que no puedes ejecutar código, que no tienes un entorno de PSeInt, que no puedes probarlo o que solo lo revisas "a mano": sí lo ejecutas y lo pruebas. Cuando en el historial veas en uno de tus mensajes una nota entre corchetes que empieza por "[Motor de PSeInt:", esa es la ejecución REAL de ese código: úsala tal cual para responder ("lo ejecuté y terminó sin errores; salida: ...", "dio error en la línea 12: ..."), sin inventar nada.'
                 : '5. EJECUCIÓN: Patto lleva dentro un motor de PSeInt, pero el usuario tiene DESACTIVADA la opción "Ejecutar y corregir el código", así que el pseudocódigo no se ejecuta automáticamente. No afirmes que lo has ejecutado ni que lo has probado; si te pregunta, dile que puede activarla en el diálogo de perfiles (sección "Visualización") y que entonces Patto lo probará con su motor. Nunca digas que no puedes ejecutar código en absoluto.';
 
             // Con la búsqueda web activa se amplía el ámbito: Beam puede usar web_search
@@ -2602,11 +2602,13 @@
                 let error = null, linea = 0, detenidoPorTope = false;
                 let nLecturas = 0;
                 const relleno = (opciones && opciones.relleno) || [3, 5, 2, 0];
+                const maxSteps = (opciones && opciones.maxSteps) || 300000;
+                const alarmaMs = (opciones && opciones.alarmaMs) || 4000;
                 let runner = null;
                 const alarma = setTimeout(() => {
                     detenidoPorTope = true;
                     if (runner) { try { runner.stop(); } catch (e) {} }
-                }, 4000);
+                }, alarmaMs);
 
                 const io = {
                     print: (t) => { salida += t; if (salida.length > 6000) salida = salida.slice(-6000); },
@@ -2623,7 +2625,7 @@
                 };
 
                 try {
-                    runner = new PSEInt.Runner(code, { rules: profile, io: io, maxSteps: 300000 });
+                    runner = new PSEInt.Runner(code, { rules: profile, io: io, maxSteps: maxSteps });
                 } catch (e) {
                     clearTimeout(alarma);
                     resolve({ ok: false, error: (e && e.message) || String(e), linea: (e && e.line) || 0, salida: salida });
@@ -2643,7 +2645,58 @@
             });
         }
 
+        /* Juegos de datos con los que se prueba el algoritmo antes de darlo por
+           bueno. El primero es el de siempre (decide si el programa "no terminó");
+           los demás recorren otras ramas: menús con opciones, casos límite (cero,
+           números distintos)... Un programa correcto pasa todos; si solo falla con
+           algunos, casi siempre hay una rama sin proteger y se avisa de ello. */
+        const RELLENOS_PRUEBA = [
+            [3, 5, 2, 0], [1, 7, 3, 0], [2, 9, 4, 0], [4, 8, 2, 0],
+            [5, 2, 3, 0], [6, 1, 0, 0], [7, 0, 2, 0], [0, 2, 4, 0],
+            [-3, -1, 2, 0], [1, 1, 1, 1]
+        ];
+
+        /* Ejecuta con el primer juego de datos y, si sale bien, con los demás.
+           Devuelve el resultado del primero (el que decide "no terminó") y la lista
+           de fallos encontrados con los otros datos. */
+        async function dryRunConCobertura(code, profile, signal) {
+            const primero = await dryRunPSeInt(code, profile);
+            const r = { res: primero, pruebas: 1, fallos: [] };
+            if (!primero.ok || signal && signal.aborted) return r;
+            for (let i = 1; i < RELLENOS_PRUEBA.length; i++) {
+                if (signal && signal.aborted) break;
+                const relleno = RELLENOS_PRUEBA[i];
+                const extra = await dryRunPSeInt(code, profile,
+                    { relleno: relleno, maxSteps: 150000, alarmaMs: 1500 });
+                r.pruebas++;
+                if (extra.sinMotor) break;
+                // Que con esos datos no termine no es un fallo del algoritmo (un
+                // menú puede no salir nunca con datos automáticos): no se cuenta.
+                if (extra.ok || extra.timeout) continue;
+                r.fallos.push({ error: extra.error, linea: extra.linea, relleno: relleno });
+                break;
+            }
+            return r;
+        }
+
+        /* Los datos de prueba, para los mensajes ("con los datos 4, 8, 2, 0..."). */
+        function datosDePrueba(relleno) {
+            return relleno ? relleno.join(', ') : '';
+        }
+
         function construirPeticionCorreccion(res) {
+            if (res.parcial) {
+                return [
+                    'El algoritmo que acabas de entregar se ejecuta bien con los datos de prueba habituales, pero con OTROS datos falla con el perfil activo "' + activePresetName + '".',
+                    'Lo probé tecleando ' + datosDePrueba(res.relleno) + ' y el motor de PSeInt falló' + (res.linea ? ' en la línea ' + res.linea : '') + ' con este error:',
+                    '',
+                    '    ' + String(res.error || '').split('\n')[0],
+                    '',
+                    'Revisa esa rama: casi siempre es un caso sin contemplar (divisor cero, índice fuera de rango, valor negativo, opción no válida...).',
+                    'Si el fallo es solo por esos datos de prueba y el algoritmo ya está correcto, devuélvelo exactamente igual.',
+                    'Responde ÚNICAMENTE con el bloque ```pseint ... ``` , sin explicaciones ni texto fuera del bloque.'
+                ].join('\n');
+            }
             return [
                 'El algoritmo que acabas de entregar NO se ejecuta correctamente con el perfil activo "' + activePresetName + '".',
                 'Lo ejecuté con el motor de PSeInt y falló' + (res.linea ? ' en la línea ' + res.linea : '') + ' con este error:',
@@ -2705,7 +2758,8 @@
                 if (!bloque || !esCodigoEjecutable(bloque.code)) return { texto: actual, report: null };
 
                 if (ctx.onEstado) ctx.onEstado('run', null);
-                let res = await dryRunPSeInt(bloque.code, activeProfile);
+                const corrida = await dryRunConCobertura(bloque.code, activeProfile, ctx.signal);
+                let res = corrida.res;
                 ultimo = res;
                 if (res.sinMotor) return { texto: actual, report: null };
 
@@ -2717,22 +2771,34 @@
                     if (otra.ok) { res = otra; ultimo = otra; }
                 }
 
+                // Pasa con los datos de siempre pero falla con otros: casi siempre
+                // es una rama sin proteger. Se le pide al modelo que la revise una
+                // vez; si no puede, el algoritmo se entrega con el aviso.
+                if (res.ok && corrida.fallos.length) {
+                    const f = corrida.fallos[0];
+                    res = { ok: false, parcial: true, error: f.error, linea: f.linea,
+                            relleno: f.relleno, salida: res.salida };
+                    ultimo = res;
+                }
+
                 if (res.ok) {
                     return {
                         texto: actual,
                         report: {
                             estado: intentos ? 'corregido' : 'verificado',
                             intentos: intentos,
+                            pruebas: corrida.pruebas,
                             salida: res.salida,
                             error: primerError ? primerError.error : null,
-                            linea: primerError ? primerError.linea : 0
+                            linea: primerError ? primerError.linea : 0,
+                            relleno: primerError ? (primerError.relleno || null) : null
                         }
                     };
                 }
                 if (res.timeout) {
                     return { texto: actual, report: { estado: 'lento', error: res.error } };
                 }
-                if (!primerError) primerError = { error: res.error, linea: res.linea };
+                if (!primerError) primerError = { error: res.error, linea: res.linea, relleno: res.relleno || null };
 
                 if (intentos >= MAX_CODE_REPAIRS || (ctx.signal && ctx.signal.aborted)) break;
 
@@ -2755,9 +2821,10 @@
             return {
                 texto: actual,
                 report: (ctx.signal && ctx.signal.aborted) ? null : {
-                    estado: 'error',
+                    estado: (ultimo && ultimo.parcial) ? 'parcial' : 'error',
                     error: (ultimo && ultimo.error) || 'No se pudo ejecutar el algoritmo.',
                     linea: (ultimo && ultimo.linea) || 0,
+                    relleno: (ultimo && ultimo.relleno) || null,
                     intentos: intentos
                 }
             };
@@ -2779,13 +2846,21 @@
             const salida = resumirSalida(r.salida);
             const cola = salida ? '; salida del programa: ' + salida : '';
             const err = r.error ? String(r.error).split('\n')[0] : '';
+            const pruebas = (r.pruebas && r.pruebas > 1) ? ' (probado con ' + r.pruebas + ' juegos de datos de relleno)' : '';
+            const datos = r.relleno ? ' con los datos ' + datosDePrueba(r.relleno) : '';
             if (r.estado === 'verificado') {
-                return '[Motor de PSeInt: este código se ejecutó sin errores' + cola + ']';
+                return '[Motor de PSeInt: este código se ejecutó sin errores' + pruebas + cola + ']';
+            }
+            if (r.estado === 'parcial') {
+                return '[Motor de PSeInt: este código va bien con los datos de prueba habituales, pero' + datos
+                    + ' falla' + (r.linea ? ' en la línea ' + r.linea : '')
+                    + (err ? ' (' + err + ')' : '') + ': puede haber una rama sin controlar]';
             }
             if (r.estado === 'corregido') {
                 return '[Motor de PSeInt: al ejecutar este código el motor dio error'
                     + (r.linea ? ' en la línea ' + r.linea : '')
                     + (err ? ' (' + err + ')' : '')
+                    + datos
                     + ' y se corrigió automáticamente'
                     + (r.intentos > 1 ? ' en ' + r.intentos + ' intentos' : '')
                     + '; la versión corregida se ejecuta sin errores' + cola + ']';
@@ -2805,16 +2880,29 @@
             const err = escapeHtml(String(r.error || '').split('\n')[0].slice(0, 160).replace(/[.\s]+$/, ''));
             const salida = resumirSalida(r.salida);
             const cola = salida ? ' <span style="opacity:0.8">Salida: ' + escapeHtml(salida) + '</span>' : '';
+            const pruebas = (r.pruebas && r.pruebas > 1)
+                ? ' (' + r.pruebas + ' juegos de datos de prueba)' : '';
+            const datos = r.relleno ? ' con los datos ' + escapeHtml(datosDePrueba(r.relleno)) : '';
+            const detalleDatos = RELLENOS_PRUEBA.slice(0, Math.max(1, r.pruebas || 1))
+                .map((d) => d.join(' ')).join(' | ');
 
             if (r.estado === 'verificado') {
-                return '<div class="pseint-verify-chip pseint-verify-ok" title="Ejecutado con el motor de PSeInt, perfil ' + escapeHtml(activePresetName) + '">'
-                    + '<span class="pv-icon">✓</span><span><strong>Ejecutado y verificado</strong> con el motor de PSeInt.' + cola + '</span></div>';
+                return '<div class="pseint-verify-chip pseint-verify-ok" title="Ejecutado con el motor de PSeInt, perfil ' + escapeHtml(activePresetName) + '. Datos de prueba: ' + escapeHtml(detalleDatos) + '">'
+                    + '<span class="pv-icon">✓</span><span><strong>Ejecutado y verificado</strong> con el motor de PSeInt' + pruebas + '.' + cola + '</span></div>';
+            }
+            if (r.estado === 'parcial') {
+                return '<div class="pseint-verify-chip pseint-verify-warn" title="' + escapeHtml(r.error || '') + '">'
+                    + '<span class="pv-icon">!</span><span><strong>Ejecutado con avisos</strong>: con los datos de prueba habituales funciona, pero' + datos + ' falla'
+                    + (r.linea ? ' en la línea <code>' + r.linea + '</code>' : '')
+                    + (err ? ': <code>' + err + '</code>' : '')
+                    + '. Puede ser un caso sin contemplar. Pídele a Patto que lo revise.</span></div>';
             }
             if (r.estado === 'corregido') {
                 return '<div class="pseint-verify-chip pseint-verify-fix" title="Error detectado: ' + escapeHtml(r.error || '') + '">'
                     + '<span class="pv-icon">✓</span><span><strong>Corregido automáticamente</strong>: al ejecutarlo, el motor dio '
                     + (r.linea ? 'error en la línea <code>' + r.linea + '</code> ' : 'un error ')
                     + (err ? '(<code>' + err + '</code>) ' : '')
+                    + datos
                     + 'y Patto lo arregló' + (r.intentos > 1 ? ' tras ' + r.intentos + ' intentos' : '') + '.' + cola + '</span></div>';
             }
             if (r.estado === 'lento') {
