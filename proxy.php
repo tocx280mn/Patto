@@ -13,24 +13,30 @@
  *
  * Sube este archivo junto a index.html en Profreehost.
  *
- * La API key puede vivir FUERA de la carpeta web (recomendado): ver el bloque
- * "Configuracion de la API key" mas abajo.
+ * La API key puede vivir JUNTO a este archivo o fuera de la carpeta web: ver el
+ * bloque "Configuracion de la API key" mas abajo.
  */
 
 /* --- Configuracion de la API key -------------------------------------------
  * La key se busca en este orden (gana la primera que exista):
  *
  *   1) Variable de entorno  REFLECTION_API_KEY
- *      (cPanel: "MultiPHP INI Editor" / SetEnv en .htaccess, o export en local)
+ *      (SetEnv en .htaccess, export en local, panel de PHP del hosting).
  *
- *   2) Archivo patto_secret.php FUERA de la carpeta web   <-- RECOMENDADO
- *      Crea el archivo patto_secret.php en la carpeta PADRE de la carpeta donde
- *      subiste la app (o dos niveles mas arriba). Contenido (una sola linea):
+ *   2) Archivo patto_secret.php JUNTO a este proxy.php   <-- LO MAS COMODO
+ *      Contenido (una sola linea):
  *          <?php define('REFLECTION_API_KEY', 'eyJ...');
- *      Al estar fuera de la carpeta publica, nadie puede descargarlo por URL ni
- *      aunque el hosting sirviera los .php como texto plano.
+ *      Es un archivo PHP, asi que el servidor lo EJECUTA en lugar de mostrarlo:
+ *      pedirlo por URL no revela la key (la plantilla ademas responde 404).
+ *      Es la unica opcion valida en paneles que no dejan subir nada fuera de la
+ *      carpeta web, como VistaPanel (el panel de Profreehost): ahi todo vive en
+ *      "htdocs".
  *
- *   3) La constante de respaldo de aqui abajo (vacia en este repositorio).
+ *   3) Archivo patto_secret.php FUERA de la carpeta web, en la carpeta PADRE de
+ *      la app (o dos niveles mas arriba). Es la opcion mas segura, pero requiere
+ *      que el panel permita subir archivos fuera de la carpeta publica.
+ *
+ *   4) La constante de respaldo de aqui abajo (vacia en este repositorio).
  *      Si la rellenas, la key queda escrita en un archivo que sirve el servidor
  *      web: nunca subas ese archivo a GitHub ni lo dejes asi en un hosting
  *      compartido. En el repo esta vacia a proposito.
@@ -39,9 +45,9 @@ $patto_key = (string) getenv('REFLECTION_API_KEY');
 
 if ($patto_key === '') {
     foreach ([
+        __DIR__ . '/patto_secret.php',               // JUNTO a proxy.php
         dirname(__DIR__) . '/patto_secret.php',      // carpeta PADRE de la app
         dirname(__DIR__, 2) . '/patto_secret.php',   // dos niveles arriba
-        __DIR__ . '/patto_secret.php',               // junto a proxy.php
     ] as $patto_secret) {
         if (is_file($patto_secret)) {
             require_once $patto_secret;
@@ -64,7 +70,7 @@ if ($patto_key !== '' && !defined('REFLECTION_API_KEY')) {
 if (!defined('REFLECTION_API_KEY') || REFLECTION_API_KEY === '') {
     http_response_code(500);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(['error' => 'El proxy no tiene configurada la API key.']);
+    echo json_encode(['error' => 'El proxy no tiene configurada la API key. Coloca patto_secret.php junto a proxy.php o define REFLECTION_API_KEY.']);
     exit;
 }
 const REFLECTION_URL     = 'https://api.reflection.ai/openai/v1/chat/completions';

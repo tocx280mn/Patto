@@ -37,20 +37,21 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
        perfiles/          (carpeta con los iconos)
        proxy.php
 
-2. Coloca la API key, por orden de preferencia:
+2. Coloca la API key. Deja el archivo `patto_secret.php` (toma como base
+   `patto_secret.example.php`), que tiene una sola linea util:
 
-   a) Fuera de la carpeta web: `patto_secret.php` en la carpeta PADRE de la app,
-      con una sola linea:
+        <?php define('REFLECTION_API_KEY', 'tu_key');
 
-          <?php define('REFLECTION_API_KEY', 'tu_key');
+   El proxy lo busca en este orden, y gana el primero que exista:
 
-      Toma como base `patto_secret.example.php`.
+   a) Junto a `proxy.php`. Es lo mas comodo y funciona en cualquier panel. Como
+      es un archivo PHP, el servidor lo ejecuta en lugar de mostrarlo: pedirlo
+      por URL no revela la key, y la plantilla ademas responde 404.
 
-   b) Si el panel solo permite subir dentro de la carpeta web (en VistaPanel, el
-      panel de Profreehost, todo vive en `htdocs`), deja `patto_secret.php`
-      junto a `proxy.php`. El proxy lo busca ahi tambien, y como es un archivo
-      PHP el servidor lo ejecuta en vez de mostrarlo, asi que pedirlo por URL no
-      revela la key.
+   b) Fuera de la carpeta web, en la carpeta PADRE de la app. Es lo mas seguro,
+      pero requiere que el panel deje subir archivos fuera de la carpeta publica.
+      Varios no lo permiten: en VistaPanel (el panel de Profreehost) todo vive en
+      `htdocs` y las subidas de ahi hacia arriba se rechazan.
 
    c) Como ultimo recurso, la constante de respaldo dentro de `proxy.php`.
       Funciona igual, pero deja la key escrita en un archivo de la carpeta
@@ -66,7 +67,8 @@ No hace falta PHP: `dev/server.js` sirve los archivos y hace de proxy.
     # abre http://127.0.0.1:8000
 
 La key se lee, en este orden, de la variable de entorno `REFLECTION_API_KEY`,
-de `patto_secret.php` (carpeta padre) o del respaldo en `proxy.php`.
+de `patto_secret.php` (junto a `proxy.php` o en la carpeta padre) o del respaldo
+en `proxy.php`.
 
 `dev/server.py` es una alternativa en Python con la misma funcion.
 

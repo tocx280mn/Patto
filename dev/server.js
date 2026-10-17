@@ -30,13 +30,14 @@ const REFLECTION_URL = 'https://api.reflection.ai/openai/v1/chat/completions';
 const REFLECTION_MODEL = 'Beam-1.0-501B-A23B';
 
 /* La key puede estar en: la variable de entorno (tiene prioridad), un archivo
-   patto_secret.php (fuera de la carpeta web) o el respaldo dentro de proxy.php. */
+   patto_secret.php (junto a proxy.php o fuera de la carpeta web) o el respaldo
+   dentro de proxy.php. Mismo orden que proxy.php. */
 let keyOrigen = '';
 function keyFromProxyPhp() {
   const candidatos = [
+    path.join(ROOT, 'patto_secret.php'),
     path.join(ROOT, '..', 'patto_secret.php'),
     path.join(ROOT, '..', '..', 'patto_secret.php'),
-    path.join(ROOT, 'patto_secret.php'),
   ];
   for (const f of candidatos) {
     try {
@@ -322,7 +323,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   if (REFLECTION_API_KEY.includes('PEGA_TU_KEY_AQUI') || REFLECTION_API_KEY.includes('TU_API_KEY_AQUI')) {
     console.log('!! Aviso: no se encontro la API key. Define la variable de entorno');
-    console.log('   REFLECTION_API_KEY o crea patto_secret.php en la carpeta padre de la app.');
+    console.log('   REFLECTION_API_KEY o crea patto_secret.php junto a proxy.php.');
   } else {
     console.log('API key cargada desde ' +
       (process.env.REFLECTION_API_KEY ? 'la variable de entorno REFLECTION_API_KEY' : keyOrigen) +
