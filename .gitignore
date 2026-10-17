@@ -1,0 +1,24 @@
+# Secretos: la API key de Beam nunca entra al repositorio.
+patto_secret.php
+patto_secret*.php
+!patto_secret.example.php
+.env
+.env.*
+
+# Respaldos, temporales y archivos generados
+*.bak
+*.orig
+*~
+*.log
+*.tmp
+dev/diagram_test.html
+
+# Editores y sistema
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Node
+node_modules/

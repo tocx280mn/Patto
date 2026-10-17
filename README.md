@@ -1,0 +1,118 @@
+# Patto
+
+Patto es un chat web que escribe y ejecuta pseudocodigo PSeInt. Le pides un
+algoritmo, te lo devuelve en pseudocodigo y puedes ejecutarlo en el momento en
+una consola interactiva, sin salir de la pagina.
+
+El interprete de PSeInt esta reescrito en JavaScript dentro de este proyecto: no
+usa WebAssembly ni servicios externos, todo corre en el navegador.
+
+## Funciones
+
+- Escribe pseudocodigo PSeInt respetando el perfil de lenguaje activo.
+- Ejecuta el algoritmo: la consola atiende los `Leer` y muestra la salida de
+  `Escribir`.
+- Diagramas de flujo y de Nassi-Shneiderman generados como SVG (se activan en
+  Configuracion).
+- 469 perfiles de lenguaje (los de PSeInt mas tres extra), cada uno con su icono.
+- Panel de razonamiento con el nivel de esfuerzo activo (Low, Medium, High, Max).
+- Contador real de velocidad: tokens por segundo, tokens y segundos.
+- Busqueda en internet opcional. Apagada, Patto solo responde sobre PSeInt.
+- Adjunta archivos `.psc` para que los revise o los ejecute.
+- Interfaz adaptable a movil.
+
+## Requisitos
+
+- Un hosting con PHP 8 y `curl` con salida a internet. Probado en Profreehost con
+  PHP 8.3. No hace falta base de datos.
+- Una API key de Reflection AI para el modelo Beam.
+
+## Instalacion en el hosting
+
+1. Sube a la carpeta publica:
+
+       index.html
+       pseint_engine.js
+       perfiles.js
+       perfiles/          (carpeta con los iconos)
+       proxy.php
+
+2. Crea `patto_secret.php` en la carpeta PADRE de la app, fuera de la carpeta
+   publica, con una sola linea:
+
+       <?php define('REFLECTION_API_KEY', 'tu_key');
+
+   Toma como base `patto_secret.example.php`.
+
+3. Abre la pagina. Si falta la key, `proxy.php` responde 500 con un aviso claro.
+
+## Desarrollo local
+
+No hace falta PHP: `dev/server.js` sirve los archivos y hace de proxy.
+
+    node dev/server.js
+    # abre http://127.0.0.1:8000
+
+La key se lee, en este orden, de la variable de entorno `REFLECTION_API_KEY`,
+de `patto_secret.php` (carpeta padre) o del respaldo en `proxy.php`.
+
+`dev/server.py` es una alternativa en Python con la misma funcion.
+
+## Pruebas
+
+    node dev/check_syntax.js        # valida el JavaScript incrustado en index.html
+    node dev/test_engine.js         # interprete: expresiones, control, arreglos
+    node dev/test_engine2.js        # mas casos del interprete
+    node dev/test_arrays_params.js  # arreglos y parametros por referencia
+    node dev/test_perfil_ops.js     # operadores segun el perfil (Y, O, NO, MOD)
+    node dev/test_tresenraya.js     # partida completa de tres en raya
+    node dev/test_diagram.js        # genera diagramas de prueba en dev/
+    node dev/test_examples.js       # pasa los ejemplos oficiales de PSeInt
+
+`test_examples.js` necesita la carpeta `bin/ejemplos` de la distribucion de
+PSeInt. Indica su ruta con la variable de entorno `PSEINT_EJEMPLOS`. Si la carpeta
+no existe, la prueba se omite con un aviso.
+
+## Estructura
+
+    index.html           Interfaz completa: HTML, CSS y JavaScript en un archivo
+    pseint_engine.js     Interprete de PSeInt y generadores de diagramas (SVG)
+    perfiles.js          Los 469 perfiles de lenguaje con sus reglas
+    perfiles/icons/      Iconos de los perfiles
+    proxy.php            Proxy hacia la API; mantiene la key en el servidor
+    dev/                 Servidores de desarrollo y pruebas
+    LICENSE              Texto completo de la licencia
+
+## Por que hay un proxy
+
+`api.reflection.ai` no envia cabeceras CORS, asi que el navegador no puede
+llamarla directamente. `proxy.php` hace la llamada desde el servidor y reenvia la
+respuesta en streaming. La key nunca llega al navegador.
+
+El proxy solo atiende peticiones de su propio dominio (el `Origin` debe coincidir
+con el `Host`) y limita a 60 peticiones cada 10 minutos por IP.
+
+## Perfiles e iconos
+
+Los perfiles de lenguaje y sus iconos provienen de PSeInt
+(https://pseint.sourceforge.net), de Pablo Novara y sus colaboradores, y se
+distribuyen bajo GPL-2.0. Cada icono representa a la institucion que envio el
+perfil y sigue siendo propiedad de esa institucion.
+
+## Licencia
+
+GPL-2.0. Es una licencia con copyleft: puedes usar, estudiar, modificar y
+redistribuir este programa, y toda version derivada debe publicarse bajo la misma
+licencia. El texto completo esta en `LICENSE`.
+
+Se usa GPL-2.0, y no una licencia permisiva, porque el proyecto redistribuye datos
+de PSeInt (perfiles e iconos), que se publican bajo GPL v2. Se mantiene la version
+2 exacta, sin la clausula "o posterior", porque PSeInt no la concede.
+
+## Creditos
+
+- PSeInt, de Pablo Novara: origen de los perfiles, los ejemplos y las reglas de
+  lenguaje que reimplementa el motor.
+- Reflection AI (Beam): el modelo que genera los algoritmos.
+- PSeInt Mobile: https://pseint-mobile.unaux.com
+- Autor: https://github.com/tocx280mn
