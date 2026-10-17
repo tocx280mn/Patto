@@ -2910,11 +2910,26 @@
                 signal
             });
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                // El servidor puede responder un JSON con el motivo (asi lo hace
+                // proxy.php) o una pagina de error del propio hosting: se muestra
+                // lo que haya, porque "sin conexion" a secas no ayuda a nadie.
+                let detalle = '';
+                try {
+                    const crudo = await response.text();
+                    try {
+                        const j = JSON.parse(crudo);
+                        detalle = j.error || j.message || crudo;
+                    } catch (_) { detalle = crudo; }
+                } catch (_) {}
+                detalle = String(detalle || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+                throw new Error('HTTP ' + response.status + (detalle ? ' - ' + detalle : ' - respuesta vacia del servidor'));
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
+            let streamError = null;   // error enviado DENTRO del stream (formato SSE)
 
             const render = () => {
                 const parsedParts = splitThinkAndContent(prefix + content);
@@ -2955,6 +2970,14 @@
                     if (dataStr === '[DONE]') continue;
                     try {
                         const parsed = JSON.parse(dataStr);
+                        // Beam (o el proxy) tambien puede mandar el error DENTRO del
+                        // stream. Sin esto, el turno terminaria vacio y pareceria que
+                        // "no hay conexion", ocultando el motivo real.
+                        if (parsed.error) {
+                            const eObj = parsed.error;
+                            streamError = (typeof eObj === 'string' ? eObj : (eObj.message || eObj.code)) || 'error del servidor';
+                            continue;
+                        }
                         if (parsed.usage) usage = parsed.usage;   // conteo real de tokens
                         const choice = parsed.choices?.[0];
                         if (choice?.finish_reason) finishReason = choice.finish_reason;
@@ -2982,6 +3005,13 @@
                         render();
                     } catch (_) {}
                 }
+            }
+
+            if (streamError) {
+                // Si ya se recibio texto, se conserva y se corta ahi. Si no llego nada,
+                // se propaga el motivo para que el aviso diga QUE paso en realidad.
+                if (!content && !reasoning && !Object.keys(toolCallsAcc).length) throw new Error(streamError);
+                finishReason = finishReason || 'error';
             }
 
             return {
@@ -3899,7 +3929,12 @@
                 fullResponse = finalAnswerText;
             } catch (err) {
                 if (err.name !== 'AbortError' && !fullResponse) {
-                    showToast('Sin conexión con el modelo: respondo con el motor local', true);
+                    // Antes el aviso era siempre "sin conexion", aunque el problema fuera
+                    // del servidor. Ahora muestra el motivo real (HTTP 500, error del
+                    // proxy, etc.) y lo deja en la consola para poder diagnosticarlo.
+                    const motivo = (err && err.message) ? String(err.message).slice(0, 180) : 'sin detalle';
+                    console.error('[Patto] fallo al llamar al modelo:', err);
+                    showToast('El servidor no respondió (' + motivo + '). Uso el motor local.', true);
                     const fallbackThought = generateLocalPSeIntThoughts(userText, false);
                     const fallbackAnswer = generateLocalPSeIntResponse(userText);
                     const res = await streamLocalResponseWithThoughts(targetEl, fallbackThought, fallbackAnswer, abortController.signal);

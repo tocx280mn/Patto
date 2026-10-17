@@ -12,6 +12,7 @@
  *                       -> busca en internet (Wikipedia + DuckDuckGo) y devuelve { "text": ... }
  *
  * Sube este archivo junto a index.html en Profreehost.
+ * Probado en Profreehost (VistaPanel: nginx/openresty + PHP-FPM).
  *
  * La API key puede vivir JUNTO a este archivo o fuera de la carpeta web: ver el
  * bloque "Configuracion de la API key" mas abajo.
@@ -76,6 +77,41 @@ if (!defined('REFLECTION_API_KEY') || REFLECTION_API_KEY === '') {
 const REFLECTION_URL     = 'https://api.reflection.ai/openai/v1/chat/completions';
 const REFLECTION_MODEL   = 'Beam-1.0-501B-A23B';
 const USER_AGENT         = 'Mozilla/5.0 (compatible; Patto/1.0)';
+
+/* --- Requisitos del hosting -------------------------------------------------
+ * Todo el proxy usa cURL (el reenvio a Beam y la busqueda web). Si el hosting no
+ * la tiene, es mejor decirlo con un mensaje claro que morir con un 500 vacio.
+ * ------------------------------------------------------------------------- */
+if (!function_exists('curl_init')) {
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['error' => 'El hosting no tiene habilitada la extension cURL de PHP, y el proxy la necesita.']);
+    exit;
+}
+
+/* --- Red de seguridad contra errores fatales --------------------------------
+ * Si PHP muere a mitad (una funcion que no existe en este hosting, memoria
+ * agotada, etc.), sin esto el navegador recibe un 500 VACIO: parece "sin
+ * conexion" y no hay pista de nada. Con este manejador el motivo llega al chat.
+ * ------------------------------------------------------------------------- */
+$patto_sse_iniciado = false;
+register_shutdown_function(function () use (&$patto_sse_iniciado) {
+    $e = error_get_last();
+    if (!is_array($e) || !in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) {
+        return;
+    }
+    $detalle = basename((string)($e['file'] ?? '?')) . ':' . (string)($e['line'] ?? '?') . ' ' . (string)($e['message'] ?? '');
+    $detalle = trim(preg_replace('/\s+/', ' ', $detalle));
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    if ($patto_sse_iniciado) {
+        echo 'data: ' . json_encode(['error' => ['message' => 'Error interno del proxy: ' . $detalle]]) . "\n\n";
+    } else {
+        echo json_encode(['error' => 'Error interno del proxy: ' . $detalle]);
+    }
+});
 
 /* --- CORS ------------------------------------------------------------------
  * index.html y proxy.php se sirven desde el MISMO origen, asi que el navegador
@@ -178,20 +214,30 @@ $payload['model']  = REFLECTION_MODEL;
 $payload['stream'] = true;
 $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-// El proxy solo espera a la red (no consume CPU), así que el límite de ejecución de
-// PHP no debería matarlo; lo desactivamos por seguridad en respuestas largas.
-@set_time_limit(0);
+// Cabeceras de streaming ANTES de tocar nada mas: asi, si algo falla despues, el
+// navegador recibe el motivo dentro del propio stream (ver red de seguridad).
+header('Content-Type: text/event-stream; charset=utf-8');
+header('Cache-Control: no-cache');
+header('X-Accel-Buffering: no');   // nginx/openresty: que no acumule el stream
+$patto_sse_iniciado = true;
 
 // Desactivar buffering de PHP/webserver para que el stream fluya.
 while (ob_get_level() > 0) { ob_end_flush(); }
-@ini_set('zlib.output_compression', '0');
-@ini_set('output_buffering', '0');
-@ini_set('implicit_flush', '1');
-@apache_setenv('no-gzip', '1');
 
-header('Content-Type: text/event-stream; charset=utf-8');
-header('Cache-Control: no-cache');
-header('X-Accel-Buffering: no');
+/* OJO: las tres funciones siguientes NO existen en todos los hostings.
+ *   - apache_setenv solo existe si PHP corre como modulo de Apache. Este hosting
+ *     usa nginx/openresty + PHP-FPM, asi que ahi no esta.
+ *   - set_time_limit e ini_set se desactivan a menudo (disable_functions).
+ * En PHP 8 llamar a una funcion desactivada es un ERROR FATAL, y eso era justo
+ * el 500 vacio que devolvia el hosting. Las tres son solo optimizaciones, asi
+ * que se comprueba que existan antes de llamarlas. */
+if (function_exists('set_time_limit')) { @set_time_limit(0); }
+if (function_exists('ini_set')) {
+    @ini_set('zlib.output_compression', '0');
+    @ini_set('output_buffering', '0');
+    @ini_set('implicit_flush', '1');
+}
+if (function_exists('apache_setenv')) { @apache_setenv('no-gzip', '1'); }
 
 $ch = curl_init(REFLECTION_URL);
 curl_setopt_array($ch, [
