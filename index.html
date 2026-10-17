@@ -912,6 +912,111 @@
             .icon-btn { padding: 6px; }
         }
 
+        /* ═══════ DIÁLOGO DE PERFILES: ACORDEÓN EN MÓVIL ═══════
+           En el móvil la ventana se parte en secciones plegables (perfiles,
+           parámetros, visualización y reglas) para que no haya que recorrer una
+           columna larguísima; en escritorio se ven todas abiertas, como PSeInt. */
+        #profileModal .acc-head { display: none; }
+        #profileModal .acc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #profileModal .acc-hint {
+            flex-shrink: 0;
+            max-width: 42%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #profileModal .acc-chevron { flex-shrink: 0; transition: transform 0.18s ease; }
+
+        /* Escritorio: todo desplegado y el ancho de la ventana intacto */
+        @media (min-width: 768px) {
+            #profileModal .acc-section { display: flex; flex-direction: column; min-height: 0; }
+            #profileModal .acc-section.acc-grow { flex: 1 1 auto; }
+            #profileModal .acc-section.acc-fixed { flex-shrink: 0; }
+            #profileModal .acc-body { display: flex; flex-direction: column; min-height: 0; }
+            #profileModal .acc-section.acc-grow .acc-body { flex: 1 1 auto; }
+        }
+
+        /* Móvil: acordeón táctil */
+        @media (max-width: 767px) {
+            #profileModal .acc-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                width: 100%;
+                min-height: 38px;
+                padding: 9px 12px;
+                border-radius: 12px;
+                border: 1px solid var(--border-color);
+                background-color: var(--bg-panel);
+                color: var(--text-muted);
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                text-align: left;
+                cursor: pointer;
+            }
+            #profileModal .acc-head .acc-hint {
+                font-size: 10px;
+                font-weight: 500;
+                text-transform: none;
+                letter-spacing: 0;
+                color: var(--text-faint);
+            }
+            #profileModal .acc-body { display: none; padding-top: 10px; }
+            #profileModal .acc-section.is-open .acc-body {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            #profileModal .acc-section.is-open .acc-head {
+                border-color: var(--pseint-blue);
+                background-color: var(--bg-active);
+                color: var(--pseint-blue);
+            }
+            #profileModal .acc-section.is-open .acc-chevron { transform: rotate(180deg); }
+
+            /* Dentro del acordeón los separadores de escritorio sobran */
+            #profileModal .acc-body {
+                border-top: none !important;
+                margin-top: 0 !important;
+            }
+
+            /* La sección abierta se queda con el espacio que sobra y sus listas se
+               desplazan por dentro. Si no sobra espacio, la lista conserva un
+               mínimo y la columna se desplaza: nunca se queda en blanco. */
+            #profileModal .acc-section { display: flex; flex-direction: column; min-height: 0; flex-shrink: 0; }
+            #profileModal .acc-list.is-open { flex: 1 1 auto; }
+            #profileModal .acc-list.is-open .acc-body { flex: 1 1 auto; min-height: 0; }
+            #profileModal #presetListContainer { min-height: 132px; max-height: 44vh; }
+            #profileModal #profileCheckboxesList { min-height: 120px; max-height: 46vh; }
+
+            /* En el móvil la ventana se aprovecha entera y se quitan los textos
+               que ya repiten las cabeceras (el buscador ya tiene su pista). */
+            #profileModal > div { max-height: 96vh; }
+            #profileModal #colPerfiles { gap: 8px; padding: 12px; }
+            #profileModal #presetIntroLabel,
+            #profileModal #presetCountLabel { display: none; }
+        }
+
+        /* En navegadores con :has() la columna que tiene la sección abierta se
+           queda con todo el alto libre y su lista se desplaza por dentro: el
+           diálogo cabe entero en la pantalla, sin recorrerlo de arriba abajo. */
+        @supports selector(:has(*)) {
+            @media (max-width: 767px) {
+                #profileModal #colPerfiles,
+                #profileModal #colReglas { flex: 0 0 auto; min-height: 0; }
+                #profileModal #colPerfiles:has(.acc-list.is-open),
+                #profileModal #colReglas:has(.acc-list.is-open) {
+                    flex: 1 1 auto;
+                    overflow-y: auto;
+                }
+                #profileModal #presetListContainer,
+                #profileModal #profileCheckboxesList { max-height: none; }
+            }
+        }
+
         /* ═══════════════ ANIMACIONES (cortas, sin marear) ═══════════════ */
         @keyframes pattoFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes pattoRiseIn {
@@ -1393,7 +1498,7 @@
                     </svg>
                     <h2 class="text-sm font-semibold">Opciones del Lenguaje (Perfiles de PSeInt)</h2>
                 </div>
-                <button onclick="closeProfileModal()" class="text-white/80 hover:text-white p-1">
+                <button onclick="closeProfileModal()" class="text-white/80 hover:text-white p-2 -m-1 rounded-lg" aria-label="Cerrar">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
                         <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -1405,89 +1510,125 @@
             <div class="flex-1 min-h-0 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
                 
                 <!-- Columna izquierda: Buscador de perfiles e instituciones -->
-                <div class="w-full md:w-64 p-3.5 flex flex-col gap-2.5 flex-shrink-0 md:min-h-0 md:overflow-y-auto"
+                <div id="colPerfiles" class="w-full md:w-64 p-3.5 flex flex-col gap-2.5 flex-shrink-0 md:min-h-0 md:overflow-y-auto"
                      style="background-color: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
-                    <label class="text-[11px] font-medium" style="color: var(--text-muted);">
-                        Busque entre los perfiles e instituciones oficiales de PSeInt:
-                    </label>
-                    <input id="presetSearchInput" type="text" placeholder="Buscar perfil (ej. Flexible, ICAP)..."
-                           oninput="queuePresetSearch()"
-                           class="w-full px-2.5 py-1.5 text-xs rounded-lg outline-none"
-                           style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main);">
-                    <div id="presetCountLabel" class="text-[10px]" style="color: var(--text-faint);">Perfiles disponibles</div>
-                    
-                    <!-- La lista siempre reserva altura: si la columna se queda corta,
-                         la columna entera se desplaza y los perfiles siguen visibles. -->
-                    <div id="presetListContainer" class="flex-1 min-h-[180px] max-h-[260px] md:max-h-none overflow-y-auto space-y-1 pr-1">
-                        <!-- Perfiles generados dinámicamente -->
-                    </div>
 
-                    <!-- Parámetros de generación -->
-                    <div class="pt-2.5 mt-1 space-y-2" style="border-top: 1px solid var(--border-color);">
-                        <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
-                            Parámetros de Respuesta
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-xs mb-0.5">
-                                <span>Temperatura</span>
-                                <span id="tempValLabel" class="font-mono font-semibold">0.7</span>
+                    <!-- Sección 1: perfiles oficiales (abierta por defecto también en móvil) -->
+                    <div class="acc-section acc-grow acc-list is-open">
+                        <button type="button" class="acc-head" aria-expanded="true" onclick="toggleProfileAccordion(this)">
+                            <span class="acc-title">Perfiles oficiales</span>
+                            <span class="flex items-center gap-2 min-w-0">
+                                <span id="accPerfilesHint" class="acc-hint"></span>
+                                <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </span>
+                        </button>
+                        <div class="acc-body flex flex-col gap-2.5">
+                            <label id="presetIntroLabel" class="text-[11px] font-medium" style="color: var(--text-muted);">
+                                Busque entre los perfiles e instituciones oficiales de PSeInt:
+                            </label>
+                            <input id="presetSearchInput" type="text" placeholder="Buscar perfil (ej. Flexible, ICAP)..."
+                                   oninput="queuePresetSearch()"
+                                   class="w-full px-2.5 py-1.5 text-xs rounded-lg outline-none"
+                                   style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main);">
+                            <div id="presetCountLabel" class="text-[10px]" style="color: var(--text-faint);">Perfiles disponibles</div>
+
+                            <!-- La lista siempre reserva altura: si la columna se queda corta,
+                                 la columna entera se desplaza y los perfiles siguen visibles. -->
+                            <div id="presetListContainer" class="flex-1 min-h-[180px] max-h-[260px] md:max-h-none overflow-y-auto space-y-1 pr-1">
+                                <!-- Perfiles generados dinámicamente -->
                             </div>
-                            <input id="tempRange" type="range" min="0.1" max="1.2" step="0.05" value="0.7"
-                                   oninput="document.getElementById('tempValLabel').textContent=this.value"
-                                   class="w-full accent-blue-600">
-                        </div>
-                        <div>
-                            <div class="flex justify-between text-xs mb-0.5">
-                                <span>Top-p</span>
-                                <span id="toppValLabel" class="font-mono font-semibold">0.9</span>
-                            </div>
-                            <input id="toppRange" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
-                                   oninput="document.getElementById('toppValLabel').textContent=this.value"
-                                   class="w-full accent-blue-600">
                         </div>
                     </div>
 
-                    <!-- Visualización -->
-                    <div class="pt-2.5 mt-1 space-y-1.5" style="border-top: 1px solid var(--border-color);">
-                        <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
-                            Visualización
+                    <!-- Sección 2: parámetros de generación -->
+                    <div class="acc-section acc-fixed">
+                        <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
+                            <span class="acc-title">Parámetros de respuesta</span>
+                            <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                        <div class="acc-body flex flex-col gap-2 pt-2.5 mt-1" style="border-top: 1px solid var(--border-color);">
+                            <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
+                                Parámetros de Respuesta
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-0.5">
+                                    <span>Temperatura</span>
+                                    <span id="tempValLabel" class="font-mono font-semibold">0.7</span>
+                                </div>
+                                <input id="tempRange" type="range" min="0.1" max="1.2" step="0.05" value="0.7"
+                                       oninput="document.getElementById('tempValLabel').textContent=this.value"
+                                       class="w-full accent-blue-600">
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-xs mb-0.5">
+                                    <span>Top-p</span>
+                                    <span id="toppValLabel" class="font-mono font-semibold">0.9</span>
+                                </div>
+                                <input id="toppRange" type="range" min="0.1" max="1.0" step="0.05" value="0.9"
+                                       oninput="document.getElementById('toppValLabel').textContent=this.value"
+                                       class="w-full accent-blue-600">
+                            </div>
                         </div>
-                        <label class="flex items-start gap-2 text-xs cursor-pointer" style="color: var(--text-main);"
-                               title="Muestra los botones Código / Diagrama sobre cada algoritmo generado">
-                            <input type="checkbox" id="showDiagramsToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
-                                   onchange="toggleShowDiagrams(this.checked)">
-                            <span>Permitir visualizar diagramas</span>
-                        </label>
-                        <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
-                            Desactivado, los algoritmos solo se muestran como código (sin los botones Código / Diagrama).
-                        </p>
-                        <label class="flex items-start gap-2 text-xs cursor-pointer pt-1" style="color: var(--text-main);"
-                               title="Patto ejecuta el algoritmo con su motor de PSeInt antes de responder y, si falla, lo corrige">
-                            <input type="checkbox" id="verifyCodeToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
-                                   onchange="toggleVerifyCode(this.checked)">
-                            <span>Ejecutar y corregir el código (la entrega puede tardar un poco más)</span>
-                        </label>
-                        <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
-                            Antes de responder, Patto ejecuta el pseudocódigo con su motor de PSeInt. Si da error, se lo devuelve al modelo para que lo arregle.
-                        </p>
+                    </div>
+
+                    <!-- Sección 3: visualización -->
+                    <div class="acc-section acc-fixed">
+                        <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
+                            <span class="acc-title">Visualización</span>
+                            <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                        <div class="acc-body flex flex-col gap-1.5 pt-2.5 mt-1" style="border-top: 1px solid var(--border-color);">
+                            <div class="text-[11px] font-bold uppercase tracking-wider" style="color: var(--text-faint);">
+                                Visualización
+                            </div>
+                            <label class="flex items-start gap-2 text-xs cursor-pointer" style="color: var(--text-main);"
+                                   title="Muestra los botones Código / Diagrama sobre cada algoritmo generado">
+                                <input type="checkbox" id="showDiagramsToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
+                                       onchange="toggleShowDiagrams(this.checked)">
+                                <span>Permitir visualizar diagramas</span>
+                            </label>
+                            <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
+                                Desactivado, los algoritmos solo se muestran como código (sin los botones Código / Diagrama).
+                            </p>
+                            <label class="flex items-start gap-2 text-xs cursor-pointer pt-1" style="color: var(--text-main);"
+                                   title="Patto ejecuta el algoritmo con su motor de PSeInt antes de responder y, si falla, lo corrige">
+                                <input type="checkbox" id="verifyCodeToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
+                                       onchange="toggleVerifyCode(this.checked)">
+                                <span>Ejecutar y corregir el código (la entrega puede tardar un poco más)</span>
+                            </label>
+                            <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
+                                Antes de responder, Patto ejecuta el pseudocódigo con su motor de PSeInt. Si da error, se lo devuelve al modelo para que lo arregle.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Columna derecha: Las 24 reglas oficiales de PSeInt con casillas de verificación -->
-                <div class="flex-1 p-4 flex flex-col min-h-0 overflow-hidden">
-                    <div class="flex items-center justify-between gap-2 pb-2 mb-2" style="border-bottom: 1px solid var(--border-color);">
-                        <div>
-                            <h3 class="text-xs font-bold uppercase tracking-wide" style="color: var(--pseint-blue);">
-                                Reglas Sintácticas del Perfil (<span id="modalActivePresetName">Flexible</span>)
-                            </h3>
-                            <p class="text-[11px]" style="color: var(--text-muted);">
-                                Patto adaptará todo el pseudocódigo que genere a las opciones marcadas aquí:
-                            </p>
-                        </div>
-                    </div>
+                <div id="colReglas" class="flex-1 p-4 flex flex-col min-h-0 overflow-hidden">
+                    <div class="acc-section acc-grow acc-list">
+                        <button type="button" class="acc-head" aria-expanded="false" onclick="toggleProfileAccordion(this)">
+                            <span class="acc-title">Reglas sintácticas</span>
+                            <span class="flex items-center gap-2 min-w-0">
+                                <span id="accRulesHint" class="acc-hint">Flexible</span>
+                                <svg class="acc-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </span>
+                        </button>
+                        <div class="acc-body flex flex-col min-h-0">
+                            <div class="flex items-center justify-between gap-2 pb-2 mb-2" style="border-bottom: 1px solid var(--border-color);">
+                                <div>
+                                    <h3 class="text-xs font-bold uppercase tracking-wide" style="color: var(--pseint-blue);">
+                                        Reglas Sintácticas del Perfil (<span id="modalActivePresetName">Flexible</span>)
+                                    </h3>
+                                    <p class="text-[11px]" style="color: var(--text-muted);">
+                                        Patto adaptará todo el pseudocódigo que genere a las opciones marcadas aquí:
+                                    </p>
+                                </div>
+                            </div>
 
-                    <div id="profileCheckboxesList" class="flex-1 min-h-[150px] overflow-y-auto pr-1 space-y-1 select-text">
-                        <!-- 24 checkboxes generados dinámicamente -->
+                            <div id="profileCheckboxesList" class="flex-1 min-h-[150px] overflow-y-auto pr-1 space-y-1 select-text">
+                                <!-- 24 checkboxes generados dinámicamente -->
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -3621,11 +3762,13 @@
             const topBadge = document.getElementById('topProfileBadge');
             const footerName = document.getElementById('footerProfileName');
             const modalName = document.getElementById('modalActivePresetName');
+            const accRulesHint = document.getElementById('accRulesHint');
             const rulesSummary = document.getElementById('statusRulesSummary');
 
             if (topBadge) topBadge.textContent = activePresetName;
             if (footerName) footerName.textContent = activePresetName;
             if (modalName) modalName.textContent = activePresetName;
+            if (accRulesHint) accRulesHint.textContent = activePresetName;
             if (rulesSummary) {
                 const defTxt = activeProfile.obligar_definir ? 'Obligatorio' : 'Opcional';
                 const pcTxt = activeProfile.controlar_pc ? 'Obligatorio' : 'Opcional';
@@ -3654,11 +3797,17 @@
             const shown = search ? all.slice(0, PRESET_RENDER_LIMIT) : all;
 
             const counter = document.getElementById('presetCountLabel');
+            const varios = all.length !== 1;
+            const resumen = shown.length < all.length
+                ? `${shown.length} de ${all.length}`
+                : `${all.length} ${varios ? 'perfiles' : 'perfil'}`;
             if (counter) {
                 counter.textContent = shown.length < all.length
                     ? `Mostrando ${shown.length} de ${all.length} perfiles`
-                    : `${all.length} perfiles disponibles`;
+                    : `${all.length} ${varios ? 'perfiles disponibles' : 'perfil disponible'}`;
             }
+            const hint = document.getElementById('accPerfilesHint');
+            if (hint) hint.textContent = resumen;
 
             if (!all.length) {
                 container.innerHTML = `<div class="text-[11px] px-2 py-3 text-center" style="color: var(--text-muted);">Sin resultados para "${escapeHtml(search)}"</div>`;
@@ -4529,6 +4678,30 @@
             document.getElementById('mobileOverlay')?.classList.add('hidden');
         };
 
+        /* Acordeón del diálogo de perfiles. Solo se ve en móvil: en escritorio las
+           secciones están todas desplegadas y estos botones permanecen ocultos. */
+        function ponerSeccionPerfil(section, abierta) {
+            if (!section) return;
+            section.classList.toggle('is-open', abierta);
+            const head = section.querySelector('.acc-head');
+            if (head) head.setAttribute('aria-expanded', abierta ? 'true' : 'false');
+        }
+
+        window.toggleProfileAccordion = function(headEl) {
+            const section = headEl.closest('.acc-section');
+            if (!section) return;
+            const abrir = !section.classList.contains('is-open');
+            // En móvil se despliega una sección a la vez, así todo cabe sin
+            // recorrer la ventana arriba y abajo.
+            if (abrir && window.matchMedia('(max-width: 767px)').matches) {
+                const modal = section.closest('#profileModal') || document;
+                modal.querySelectorAll('.acc-section.is-open').forEach(otra => {
+                    if (otra !== section) ponerSeccionPerfil(otra, false);
+                });
+            }
+            ponerSeccionPerfil(section, abrir);
+        };
+
         window.openProfileModal = function() {
             closeMobilePanels();
             renderPresetList();
@@ -4536,6 +4709,12 @@
             const m = document.getElementById('profileModal');
             m.classList.remove('hidden');
             m.classList.add('flex');
+            // Al abrir, el acordeón móvil empieza siempre por los perfiles.
+            if (window.matchMedia('(max-width: 767px)').matches) {
+                m.querySelectorAll('.acc-section').forEach((s, i) => ponerSeccionPerfil(s, i === 0));
+            }
+            const cuerpo = m.querySelector('.overflow-y-auto');
+            if (cuerpo) cuerpo.scrollTop = 0;
         };
 
         window.closeProfileModal = function() {

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Patto · prueba de móvil</title>
+<style>
+    html, body { margin: 0; padding: 0; background: #0f172a; font-family: system-ui, sans-serif; }
+    .fila { display: flex; gap: 20px; padding: 16px; align-items: flex-start; }
+    .marco { background: #1e293b; border-radius: 18px; padding: 10px; }
+    .marco h3 { color: #94a3b8; font-size: 11px; margin: 0 0 8px; font-weight: 600; letter-spacing: .05em; }
+    iframe { border: 0; background: #fff; display: block; }
+</style>
+</head>
+<body>
+    <!-- index.html dentro de iframes de distintos anchos: las media queries del
+         propio index.html responden al ancho del iframe, así se puede comprobar
+         el diseño móvil sin depender del tamaño de la ventana. -->
+    <div class="fila">
+        <div class="marco">
+            <h3>MÓVIL 390 × 780</h3>
+            <iframe id="movil" src="../index.html" width="390" height="780"></iframe>
+        </div>
+        <div class="marco">
+            <h3>MÓVIL PEQUEÑO 320 × 640</h3>
+            <iframe id="chico" src="../index.html" width="320" height="640"></iframe>
+        </div>
+        <div class="marco">
+            <h3>MÓVIL MUY BAJO 360 × 480</h3>
+            <iframe id="bajo" src="../index.html" width="360" height="480"></iframe>
+        </div>
+        <div class="marco">
+            <h3>ESCRITORIO 1000 × 700</h3>
+            <iframe id="escritorio" src="../index.html" width="1000" height="700"></iframe>
+        </div>
+    </div>
+</body>
+</html>
