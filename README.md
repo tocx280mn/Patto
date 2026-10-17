@@ -18,10 +18,13 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
   Configuracion).
 - 469 perfiles de lenguaje (los de PSeInt mas tres extra), cada uno con su icono.
 - Panel de razonamiento con el nivel de esfuerzo activo (Low, Medium, High, Max).
+  Apagado por defecto; se enciende con el boton del cerebro.
 - Contador real de velocidad: tokens por segundo, tokens y segundos.
-- Busqueda en internet opcional. Apagada, Patto solo responde sobre PSeInt.
+- Busqueda en internet opcional, apagada por defecto. Apagada, Patto solo
+  responde sobre PSeInt; encendida, consulta la web cuando hace falta.
 - Adjunta archivos `.psc` para que los revise o los ejecute.
-- Interfaz adaptable a movil.
+- Interfaz adaptable a movil, con animaciones cortas al aparecer cada mensaje,
+  al abrir los dialogos y al pasar el raton por los botones.
 
 ## Requisitos
 

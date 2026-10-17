@@ -911,6 +911,88 @@
             .thought-body { font-size: 12px; padding: 10px 12px; }
             .icon-btn { padding: 6px; }
         }
+
+        /* ═══════════════ ANIMACIONES (cortas, sin marear) ═══════════════ */
+        @keyframes pattoFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes pattoRiseIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pattoPopIn {
+            from { opacity: 0; transform: translateY(-10px) scale(0.975); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        /* Mensajes nuevos del chat y tarjetas de bienvenida */
+        .anim-bubble { animation: pattoRiseIn 0.24s cubic-bezier(0.22, 0.8, 0.3, 1) both; }
+
+        /* Modales: el fondo se desvanece y el panel entra con un rebote leve.
+           Al quitarse la clase `hidden` la animación vuelve a empezar sola. */
+        #profileModal:not(.hidden),
+        #filesModal:not(.hidden),
+        #helpModal:not(.hidden) { animation: pattoFadeIn 0.15s ease-out both; }
+        #profileModal:not(.hidden) > div,
+        #filesModal:not(.hidden) > div,
+        #helpModal:not(.hidden) > div { animation: pattoPopIn 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.05) both; }
+
+        /* Avisos, chips y tarjetas que aparecen dentro de una respuesta */
+        .pseint-code-card,
+        .pseint-profile-warn,
+        .pseint-verify-chip,
+        .attach-chip,
+        .token-stats { animation: pattoRiseIn 0.22s ease-out both; }
+        .pseint-verify-status,
+        .pseint-diagram-view,
+        .pseint-diagram-error { animation: pattoFadeIn 0.2s ease-out both; }
+
+        /* Listas (historial de algoritmos y perfiles): realce suave al pasar el ratón */
+        #historyList > *,
+        #presetListContainer > * {
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        #historyList > *:hover,
+        #presetListContainer > *:hover { transform: translateY(-1px); }
+
+        /* Botones: reacción inmediata al pasar el ratón y al pulsar */
+        .icon-btn,
+        .pseint-run-btn,
+        .pseint-view-btn,
+        #sendBtn,
+        #stopBtn,
+        #attachBtn,
+        #reasonUnifiedBar .reason-main-pill {
+            transition: transform 0.14s ease, background-color 0.14s ease,
+                        border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+        }
+        .icon-btn:hover,
+        .pseint-run-btn:hover,
+        .pseint-view-btn:hover,
+        #sendBtn:hover,
+        #attachBtn:hover { transform: translateY(-1px); }
+        .icon-btn:active,
+        .pseint-run-btn:active,
+        .pseint-view-btn:active,
+        #sendBtn:active,
+        #stopBtn:active,
+        #attachBtn:active { transform: scale(0.95); }
+
+        /* El cambio de tema y el abrir/cerrar de paneles no dan un salto seco */
+        html, body { transition: background-color 0.25s ease, color 0.25s ease; }
+        #chatArea,
+        #historyList,
+        #composerPanel,
+        #consolePanel,
+        .pseint-code-card,
+        .pseint-code-header { transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease; }
+
+        /* Accesibilidad: si el sistema pide no animar, no se anima nada */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.001ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.001ms !important;
+            }
+        }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col select-none">
@@ -1320,10 +1402,10 @@
             </div>
 
             <!-- Contenido dividido: Perfiles predefinidos a la izquierda + 24 casillas a la derecha -->
-            <div class="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
+            <div class="flex-1 min-h-0 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
                 
                 <!-- Columna izquierda: Buscador de perfiles e instituciones -->
-                <div class="w-full md:w-64 p-3.5 flex flex-col gap-2.5 flex-shrink-0"
+                <div class="w-full md:w-64 p-3.5 flex flex-col gap-2.5 flex-shrink-0 md:min-h-0 md:overflow-y-auto"
                      style="background-color: var(--bg-sidebar); border-right: 1px solid var(--border-color);">
                     <label class="text-[11px] font-medium" style="color: var(--text-muted);">
                         Busque entre los perfiles e instituciones oficiales de PSeInt:
@@ -1334,7 +1416,9 @@
                            style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main);">
                     <div id="presetCountLabel" class="text-[10px]" style="color: var(--text-faint);">Perfiles disponibles</div>
                     
-                    <div id="presetListContainer" class="flex-1 overflow-y-auto space-y-1 max-h-36 md:max-h-none pr-1">
+                    <!-- La lista siempre reserva altura: si la columna se queda corta,
+                         la columna entera se desplaza y los perfiles siguen visibles. -->
+                    <div id="presetListContainer" class="flex-1 min-h-[180px] max-h-[260px] md:max-h-none overflow-y-auto space-y-1 pr-1">
                         <!-- Perfiles generados dinámicamente -->
                     </div>
 
@@ -1381,7 +1465,7 @@
                                title="Patto ejecuta el algoritmo con su motor de PSeInt antes de responder y, si falla, lo corrige">
                             <input type="checkbox" id="verifyCodeToggle" class="mt-0.5 accent-blue-600 flex-shrink-0"
                                    onchange="toggleVerifyCode(this.checked)">
-                            <span>Ejecutar y corregir el código</span>
+                            <span>Ejecutar y corregir el código (la entrega puede tardar un poco más)</span>
                         </label>
                         <p class="text-[10px] leading-snug" style="color: var(--text-faint);">
                             Antes de responder, Patto ejecuta el pseudocódigo con su motor de PSeInt. Si da error, se lo devuelve al modelo para que lo arregle.
@@ -1402,7 +1486,7 @@
                         </div>
                     </div>
 
-                    <div id="profileCheckboxesList" class="flex-1 overflow-y-auto pr-1 space-y-1 select-text">
+                    <div id="profileCheckboxesList" class="flex-1 min-h-[150px] overflow-y-auto pr-1 space-y-1 select-text">
                         <!-- 24 checkboxes generados dinámicamente -->
                     </div>
                 </div>
@@ -1816,11 +1900,13 @@
            ═══════════════════════════════════════════════════════════════════════ */
         let activePresetName = 'Flexible';
         let activeProfile = { ...PRESET_PROFILES['Flexible'].rules };
-        let reasoningEnabled = true;
+        /* Razonamiento visible: apagado para quien entra por primera vez (la entrega
+           es más rápida). Si ya lo activó antes, se respeta lo guardado. */
+        let reasoningEnabled = false;
         let reasoningLevel = 'medium';
 
-        /* ── Búsqueda web (tool calling de Beam) ─────────────────────────────── */
-        let webSearchEnabled = true;
+        /* ── Búsqueda web (tool calling de Beam). Apagada por defecto ─────────── */
+        let webSearchEnabled = false;
 
         /* ── Visualización de diagramas (Código / Diagrama). Desactivado por defecto ── */
         let showDiagramsEnabled = false;
@@ -3740,10 +3826,10 @@
                     </p>
 
                     <div class="w-full max-w-2xl grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
-                        ${suggestions.map(s => `
+                        ${suggestions.map((s, i) => `
                             <button type="button" onclick="useQuickPrompt(this.dataset.prompt)" data-prompt="${escapeHtml(s)}"
-                                    class="p-3 rounded-xl text-xs font-medium transition-all flex items-center justify-between gap-2 group hover:shadow-sm"
-                                    style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main);">
+                                    class="anim-bubble p-3 rounded-xl text-xs font-medium transition-all flex items-center justify-between gap-2 group hover:shadow-sm"
+                                    style="background-color: var(--bg-panel); border: 1px solid var(--border-color); color: var(--text-main); animation-delay: ${i * 45}ms;">
                                 <span>${escapeHtml(s)}</span>
                                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--pseint-blue);">
                                     <polyline points="9 18 15 12 9 6"></polyline>
@@ -3986,7 +4072,7 @@
                 // Si el mensaje trae pseudocódigo (archivo .psc adjunto o código pegado)
                 // se pinta como tarjeta ejecutable en vez de texto plano.
                 const traeCodigo = /```/.test(content);
-                wrapper.className = 'flex justify-end';
+                wrapper.className = 'flex justify-end anim-bubble';
                 wrapper.innerHTML = `
                     <div class="user-bubble ${traeCodigo ? 'w-full max-w-full' : 'max-w-[85%] sm:max-w-[78%]'} rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed shadow-sm"
                          style="background-color: var(--bg-user-bubble); border: 1px solid var(--border-color); color: var(--text-main);">
@@ -3994,7 +4080,7 @@
                     </div>
                 `;
             } else {
-                wrapper.className = 'flex items-start gap-3 w-full';
+                wrapper.className = 'flex items-start gap-3 w-full anim-bubble';
                 const savedThoughtHtml = thoughtText
                     ? buildThoughtBoxHtml(thoughtText, thoughtDuration || '1.4', false)
                     : '';
