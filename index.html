@@ -2184,8 +2184,16 @@
             const rulesText = reglas.map(r => '- ' + r).join('\n');
 
             const thoughtInstruction = reasoningEnabled
-                ? `5. RAZONAMIENTO VISIBLE OBLIGATORIO (Nivel ${reasoningLevel.toUpperCase()}): Antes de dar tu respuesta final, incluye SIEMPRE tu proceso de pensamiento interno encerrado entre etiquetas <think> y </think>. Dentro de <think>...</think> analiza el problema algorítmico en español, verifica qué reglas del perfil PSeInt "${activePresetName}" aplican (uso de Definir, punto y coma, base de arreglos, estructuras de control) y diseña la lógica paso a paso. Fuera de </think> escribe la explicación limpia y el bloque \`\`\`pseint ... \`\`\`.`
-                : '5. Responde de forma directa sin etiquetas <think>.';
+                ? `6. RAZONAMIENTO VISIBLE OBLIGATORIO (Nivel ${reasoningLevel.toUpperCase()}): Antes de dar tu respuesta final, incluye SIEMPRE tu proceso de pensamiento interno encerrado entre etiquetas <think> y </think>. Dentro de <think>...</think> analiza el problema algorítmico en español, verifica qué reglas del perfil PSeInt "${activePresetName}" aplican (uso de Definir, punto y coma, base de arreglos, estructuras de control) y diseña la lógica paso a paso. Fuera de </think> escribe la explicación limpia y el bloque \`\`\`pseint ... \`\`\`.`
+                : '6. Responde de forma directa sin etiquetas <think>.';
+
+            /* El modelo tiende a contestar "no puedo ejecutar código". Es falso:
+               Patto lleva dentro un motor de PSeInt y ejecuta el pseudocódigo antes
+               de mostrar la respuesta. Aquí se le dice, y además el resultado real de
+               cada ejecución viaja en el historial (ver textoEjecucionMotor). */
+            const motorRule = verifyCodeEnabled
+                ? '5. EJECUCIÓN REAL (no lo niegues): Patto lleva dentro un motor de PSeInt que ejecuta el pseudocódigo. Con la opción "Ejecutar y corregir el código" activada —es el caso ahora— CADA bloque ```pseint``` que entregas se ejecuta con ese motor en cuanto lo escribes, con datos de relleno; si da error, se te devuelve el error y lo arreglas antes de que el usuario lo vea. Por eso NUNCA digas que no puedes ejecutar código, que no tienes un entorno de PSeInt, que no puedes probarlo o que solo lo revisas "a mano": sí lo ejecutas y lo pruebas. Cuando en el historial veas en uno de tus mensajes una nota entre corchetes que empieza por "[Motor de PSeInt:", esa es la ejecución REAL de ese código: úsala tal cual para responder ("lo ejecuté y terminó sin errores; salida: ...", "dio error en la línea 12: ..."), sin inventar nada.'
+                : '5. EJECUCIÓN: Patto lleva dentro un motor de PSeInt, pero el usuario tiene DESACTIVADA la opción "Ejecutar y corregir el código", así que el pseudocódigo no se ejecuta automáticamente. No afirmes que lo has ejecutado ni que lo has probado; si te pregunta, dile que puede activarla en el diálogo de perfiles (sección "Visualización") y que entonces Patto lo probará con su motor. Nunca digas que no puedes ejecutar código en absoluto.';
 
             // Con la búsqueda web activa se amplía el ámbito: Beam puede usar web_search
             // para responder datos que no conozca, sin caer en el mensaje de rechazo.
@@ -2203,6 +2211,7 @@
                 rule2,
                 rule3,
                 '4. Nunca generes bloques de código en Python, JavaScript, C++ ni ningún otro lenguaje distinto a PSeInt. Todo bloque de código debe ir en ```pseint ... ```.',
+                motorRule,
                 thoughtInstruction,
                 '',
                 `REGLAS OBLIGATORIAS DEL PERFIL ACTIVO "${activePresetName}" — SI NO LAS CUMPLES, PSeInt RECHAZARÁ EL CÓDIGO CON ERRORES DE SINTAXIS:`,
@@ -2759,6 +2768,35 @@
             const limpio = String(salida || '').replace(/>[ \t]?/g, '').replace(/\s+/g, ' ').trim();
             if (!limpio) return '';
             return limpio.length > 70 ? limpio.slice(0, 70) + '…' : limpio;
+        }
+
+        /* Cómo le contamos al modelo lo que pasó al ejecutar SU código. Se añade al
+           final de su mensaje cuando se reenvía el historial: así sabe que el motor
+           lo ejecutó de verdad (y con qué resultado) y no responde que él no ejecuta
+           nada. Ver la regla 5 del prompt privado. */
+        function textoEjecucionMotor(r) {
+            if (!r || !r.estado) return '';
+            const salida = resumirSalida(r.salida);
+            const cola = salida ? '; salida del programa: ' + salida : '';
+            const err = r.error ? String(r.error).split('\n')[0] : '';
+            if (r.estado === 'verificado') {
+                return '[Motor de PSeInt: este código se ejecutó sin errores' + cola + ']';
+            }
+            if (r.estado === 'corregido') {
+                return '[Motor de PSeInt: al ejecutar este código el motor dio error'
+                    + (r.linea ? ' en la línea ' + r.linea : '')
+                    + (err ? ' (' + err + ')' : '')
+                    + ' y se corrigió automáticamente'
+                    + (r.intentos > 1 ? ' en ' + r.intentos + ' intentos' : '')
+                    + '; la versión corregida se ejecuta sin errores' + cola + ']';
+            }
+            if (r.estado === 'lento') {
+                return '[Motor de PSeInt: la ejecución no llegó a terminar (se agotó el límite de instrucciones; puede haber un bucle sin salida)]';
+            }
+            return '[Motor de PSeInt: este código da error de ejecución'
+                + (r.linea ? ' en la línea ' + r.linea : '')
+                + (err ? ': ' + err : '')
+                + ']';
         }
 
         /* Aviso compacto que acompaña al algoritmo generado. */
@@ -4409,6 +4447,10 @@
                         if (m.role === 'assistant') {
                             msg.reasoning_content = (m.reasoning_content || m.thought || '').trim()
                                 || 'Razonamiento no disponible para este turno.';
+                            // Lo que hizo el motor con ESE código: sin esto el modelo
+                            // cree que nadie lo ha ejecutado y dice que él no puede.
+                            const nota = textoEjecucionMotor(m.verify);
+                            if (nota) msg.content = String(msg.content || '') + '\n\n' + nota;
                         }
                         return msg;
                     })

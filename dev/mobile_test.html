@@ -41,5 +41,24 @@
             <iframe id="escritorioMuyBajo" src="../index.html" width="1366" height="600"></iframe>
         </div>
     </div>
+
+    <script>
+        // Cada marco abre el diálogo de perfiles en cuanto la app está lista, para
+        // poder revisar el acordeón (móvil) y las columnas (escritorio) sin hacer clic.
+        document.querySelectorAll('iframe').forEach(function (marco) {
+            let intentos = 0;
+            (function esperar() {
+                try {
+                    const w = marco.contentWindow;
+                    if (w && typeof w.openProfileModal === 'function' && w.document.getElementById('colPerfiles')) {
+                        w.openProfileModal();
+                        return;
+                    }
+                } catch (e) { /* aún cargando */ }
+                if (++intentos > 200) return;
+                setTimeout(esperar, 100);
+            })();
+        });
+    </script>
 </body>
 </html>

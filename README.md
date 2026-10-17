@@ -14,6 +14,9 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
   `Escribir`.
 - Antes de responder, ejecuta el pseudocodigo con el motor y, si da error, se lo
   devuelve al modelo para que lo corrija. Se apaga en Configuracion.
+- El resultado de esa ejecucion (salida, error y linea) viaja en el historial, asi
+  que Patto sabe que ha ejecutado el codigo y puede contarte que salio en vez de
+  responder que no ejecuta nada.
 - Diagramas de flujo y de Nassi-Shneiderman generados como SVG (se activan en
   Configuracion).
 - 469 perfiles de lenguaje (los de PSeInt mas tres extra), cada uno con su icono.
