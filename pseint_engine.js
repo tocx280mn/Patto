@@ -30,10 +30,23 @@ function fmtNum(x) {
   return s;
 }
 
+/* PSeInt trabaja con 10 dígitos significativos: `0.57*100` vale 57 y no
+   56.99999999999999. Se aplica el mismo redondeo que usa al imprimir, para que
+   trunc/redon y las comparaciones no arrastren el error de la coma flotante. */
+function cleanFloat(x) {
+  if (typeof x !== 'number' || !isFinite(x) || Number.isInteger(x)) return x;
+  var r = Math.round(x * 1e10) / 1e10;
+  return r;
+}
+
 function toStr(v) {
   if (typeof v === 'number') return fmtNum(v);
   if (typeof v === 'boolean') return v ? 'VERDADERO' : 'FALSO';
   if (typeof v === 'string') return v;
+  // Una variable sin tipo y sin valor se imprime como texto vacío (PSeInt no le
+  // asigna ningún valor por defecto hasta que se sabe de qué tipo es).
+  if (v === undefined || v === null) return '';
+  if (v && v.__ref) return toStr(v.get());
   if (v && v.__arr) return Array.isArray(v.data) ? v.data.map(toStr).join('') : '[arreglo]';
   return String(v);
 }
@@ -64,14 +77,18 @@ StopSignal.prototype = Object.create(Error.prototype);
 
 /* ───────────────────────────── Léxico ───────────────────────────── */
 
-var OPS2 = ['<-', '<=', '>=', '<>', '=='];
+var OPS2 = ['<-', '<=', '>=', '<>', '==', '!='];
 var OPS1 = '+-*/^%()[],;=<>:&|~!';
 
+/* Cada token guarda `s` (inicio) y `e` (fin) dentro de la línea. PSeInt distingue
+   `A(1)` (llamada) de `A (1)` (dos expresiones que se concatenan al Escribir),
+   así que hace falta saber si hay un espacio entre el nombre y el paréntesis. */
 function lex(line) {
   var toks = [], i = 0, n = line.length;
   while (i < n) {
     var c = line.charAt(i);
     if (c === ' ' || c === '\t' || c === '\r') { i++; continue; }
+    var start = i;
     if (c === '/' && line.charAt(i + 1) === '/') break;
     if (c === '/' && line.charAt(i + 1) === '*') { var e = line.indexOf('*/', i + 2); i = (e < 0) ? n : e + 2; continue; }
     if (c === '"' || c === "'") {
@@ -86,7 +103,7 @@ function lex(line) {
         if (ch === q) { if (line.charAt(i + 1) === q) { s += q; i += 2; continue; } i++; break; }
         s += ch; i++;
       }
-      toks.push({ t: 'str', v: s }); continue;
+      toks.push({ t: 'str', v: s, s: start, e: i }); continue;
     }
     if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(line.charAt(i + 1)))) {
       var j = i;
@@ -96,22 +113,22 @@ function lex(line) {
         while (j < n && /[0-9]/.test(line.charAt(j))) j++;
       }
       var raw = line.slice(i, j); i = j;
-      toks.push({ t: 'num', v: parseFloat(raw) }); continue;
+      toks.push({ t: 'num', v: parseFloat(raw), s: start, e: i }); continue;
     }
     if (/[A-Za-z_\u00C0-\u024F]/.test(c)) {
       var k = i;
       while (k < n && /[A-Za-z0-9_\u00C0-\u024F]/.test(line.charAt(k))) k++;
-      toks.push({ t: 'id', v: line.slice(i, k) }); i = k; continue;
+      toks.push({ t: 'id', v: line.slice(i, k), s: start, e: k }); i = k; continue;
     }
     // PSeInt trata && || &| |& como UN ÚNICO operador, y el tipo lo decide el primer
     // carácter (Evaluar.cpp: `if ((c=='&'||c=='|') && (nc=='|'||nc=='&')) i++;`).
     // Sin esto, `a && b` se partía en `a & (&b)` y el AST quedaba con un operando nulo.
     if ((c === '&' || c === '|') && (line.charAt(i + 1) === '&' || line.charAt(i + 1) === '|')) {
-      toks.push({ t: 'op', v: c }); i += 2; continue;
+      toks.push({ t: 'op', v: c, s: start, e: i + 2 }); i += 2; continue;
     }
     var two = line.substr(i, 2);
-    if (OPS2.indexOf(two) >= 0) { toks.push({ t: 'op', v: two }); i += 2; continue; }
-    if (OPS1.indexOf(c) >= 0) { toks.push({ t: 'op', v: c }); i++; continue; }
+    if (OPS2.indexOf(two) >= 0) { toks.push({ t: 'op', v: two, s: start, e: i + 2 }); i += 2; continue; }
+    if (OPS1.indexOf(c) >= 0) { toks.push({ t: 'op', v: c, s: start, e: i + 1 }); i++; continue; }
     i++; // carácter desconocido: se ignora
   }
   return toks;
@@ -144,12 +161,12 @@ function mergeMultiwords(toks, allowAccents) {
       var ok = true;
       for (var s = 0; s < seq.length; s++) {
         var tk = toks[i + s];
-        if (tk.t !== 'id' || canon(tk.v, allowAccents) !== seq[s]) { ok = false; break; }
+        if (tk.t !== 'id' || stripAccents(tk.v).toUpperCase() !== seq[s]) { ok = false; break; }
       }
       if (ok && (!matched || seq.length > matched.seq.length)) matched = { seq: seq, name: MULTI[m][1] };
     }
     if (matched) {
-      out.push({ t: 'id', v: matched.name, kw: true });
+      out.push({ t: 'id', v: matched.name, kw: true, s: toks[i].s, e: toks[i + matched.seq.length - 1].e });
       i += matched.seq.length;
     } else { out.push(toks[i]); i++; }
   }
@@ -211,6 +228,12 @@ function defaultFor(tipo) {
 
 /* ═════════════════════════════ PARSER ═════════════════════════════ */
 
+/* Funciones predefinidas de PSeInt (sin acentos, en mayúsculas). */
+var BUILTIN_NAMES = ['PI', 'EULER', 'RC', 'RAIZ', 'ABS', 'LN', 'EXP', 'SEN', 'COS', 'TAN',
+  'ASEN', 'ACOS', 'ATAN', 'AZAR', 'ALEATORIO', 'TRUNC', 'REDON', 'FECHAACTUAL', 'HORAACTUAL',
+  'LONGITUD', 'CONCATENAR', 'MAYUSCULAS', 'MINUSCULAS', 'SUBCADENA',
+  'CONVERTIRANUMERO', 'CONVERTIRATEXTO'];
+
 function Parser(code, rules) {
   this.rules = rules || {};
   this.allowAccents = this.rules.acentos_nombres !== false;
@@ -221,12 +244,35 @@ function Parser(code, rules) {
   for (var i = 0; i < this.lines.length; i++) {
     this.lines[i].toks = mergeMultiwords(lex(this.lines[i].text), this.allowAccents);
   }
+  // Nombres de funciones y subprocesos: PSeInt admite separar el nombre del
+  // paréntesis (`c <- trunc (a/b)`), así que hay que saber cuáles son funciones.
+  this.funcNames = Object.create(null);
+  for (var f = 0; f < BUILTIN_NAMES.length; f++) this.funcNames[BUILTIN_NAMES[f]] = true;
+  for (var L = 0; L < this.lines.length; L++) {
+    var tk = this.lines[L].toks;
+    for (var p = 0; p < tk.length; p++) {
+      if (tk[p].t !== 'id') continue;
+      var kk = keyWord(tk[p].v);
+      if (kk !== 'SUBPROCESO' && kk !== 'FUNCION' && kk !== 'SUBALGORITMO') continue;
+      // Registra todos los nombres del encabezado: `ret <- nombre(...)` o `ret = nombre`.
+      for (var q = p + 1; q < tk.length; q++) {
+        if (tk[q].t === 'op' && tk[q].v === '(') break;
+        if (tk[q].t === 'id') this.funcNames[keyWord(tk[q].v)] = true;
+      }
+      break;
+    }
+  }
   this.i = 0;
 }
 
+/* Los nombres de las palabras clave se comparan sin acentos: PSeInt acepta
+   `función`, `según`, `dimensión`, `finsegún`, etc. como palabras reservadas.
+   Los identificadores sí conservan sus acentos (regla `acentos_nombres`). */
+function keyWord(s) { return stripAccents(String(s)).toUpperCase(); }
+
 Parser.prototype.kw = function (tk) {
   if (!tk || tk.t !== 'id') return null;
-  return canon(tk.v, this.allowAccents);
+  return keyWord(tk.v);
 };
 Parser.prototype.tokensAt = function (i) { return this.lines[i] ? this.lines[i].toks : []; };
 Parser.prototype.curLine = function () { return this.lines[this.i] ? this.lines[this.i].line : 0; };
@@ -263,9 +309,11 @@ Parser.prototype.parseSub = function (headerToks) {
   var line = this.curLine();
   var toks = headerToks.slice(1);
   var retvar = null, name = null, params = [];
-  // posible forma:  ret <- nombre(params)
+  // posible forma:  ret <- nombre(params)   o   ret = nombre(params)
   var arrow = -1;
-  for (var a = 0; a < toks.length; a++) if (toks[a].t === 'op' && toks[a].v === '<-') { arrow = a; break; }
+  for (var a = 0; a < toks.length; a++) {
+    if (toks[a].t === 'op' && (toks[a].v === '<-' || toks[a].v === '=')) { arrow = a; break; }
+  }
   var nameArea = toks;
   if (arrow >= 0) { if (toks[0] && toks[0].t === 'id') retvar = toks[0].v; nameArea = toks.slice(arrow + 1); }
   var parIdx = -1;
@@ -337,7 +385,7 @@ Parser.prototype.parseStatement = function () {
     case 'ESCRIBIR': case 'MOSTRAR': case 'IMPRIMIR': case 'INFORMAR':
       return this.parseEscribir(toks, line);
     case 'LEER': return this.parseLeer(toks, line);
-    case 'LIMPIARPANTALLA': this.i++; return { t: 'limpiar', line: line };
+    case 'LIMPIARPANTALLA': case 'BORRARPANTALLA': this.i++; return { t: 'limpiar', line: line };
     case 'ESPERARTECLA': this.i++; return { t: 'esperartecla', line: line };
     case 'ESPERAR': return this.parseEsperar(toks, line);
     case 'SI': return this.parseSi(toks, line);
@@ -454,11 +502,28 @@ Parser.prototype.parseEsperar = function (toks, line) {
   return { t: 'esperar', expr: expr, unit: unit, line: line };
 };
 
+/* Separa la condición del resto de la línea. PSeInt admite que la primera
+   instrucción del cuerpo vaya en la misma línea sin `Entonces`/`Hacer`
+   (`si falso escribir "x"`). Se prueban prefijos de mayor a menor para quedarse
+   con la condición más larga que el analizador acepte. */
+Parser.prototype.splitCondition = function (rest, line, terminators) {
+  var toks = rest.slice();
+  if (toks.length && terminators.indexOf(this.kw(toks[toks.length - 1])) >= 0) toks = toks.slice(0, -1);
+  for (var n = toks.length; n >= 1; n--) {
+    var st = { toks: toks.slice(0, n), pos: 0 };
+    try {
+      var node = this.parseExprState(st, 0);
+      if (node && st.pos === n) return { cond: node, tail: toks.slice(n) };
+    } catch (e) { /* se prueba un prefijo más corto */ }
+  }
+  throw new PseintError('No se reconoce la condición.', line);
+};
+
 Parser.prototype.parseSi = function (toks, line) {
-  var rest = toks.slice(1);
-  if (rest.length && this.kw(rest[rest.length - 1]) === 'ENTONCES') rest = rest.slice(0, -1);
-  var cond = this.parseExpr(rest, line);
+  var split = this.splitCondition(toks.slice(1), line, ['ENTONCES']);
+  var cond = split.cond;
   this.i++;
+  if (split.tail.length) this.pushBack(split.tail, line);
   var thenB = this.parseBlock(['SINO', 'FINSI']);
   var elseB = [];
   var nx = this.tokensAt(this.i);
@@ -479,10 +544,10 @@ Parser.prototype.parseSi = function (toks, line) {
 };
 
 Parser.prototype.parseMientras = function (toks, line) {
-  var rest = toks.slice(1);
-  if (rest.length && this.kw(rest[rest.length - 1]) === 'HACER') rest = rest.slice(0, -1);
-  var cond = this.parseExpr(rest, line);
+  var split = this.splitCondition(toks.slice(1), line, ['HACER']);
+  var cond = split.cond;
   this.i++;
+  if (split.tail.length) this.pushBack(split.tail, line);
   var body = this.parseBlock(['FINMIENTRAS']);
   var st = this.tokensAt(this.i);
   if (st.length && this.kw(st[0]) === 'FINMIENTRAS') this.i++;
@@ -511,19 +576,27 @@ Parser.prototype.parsePara = function (toks, line) {
   if (hasta < 0) throw new PseintError('Falta "Hasta" en la instrucción Para.', line);
   var head = rest.slice(0, hasta);
   var tail = rest.slice(hasta + 1);
-  var arrow = -1;
-  for (var a = 0; a < head.length; a++) {
-    if (head[a].t === 'op' && head[a].v === '<-') { arrow = a; break; }
-    var kk = this.kw(head[a]);
-    if (kk === 'DESDE' || kk === 'EN') { arrow = a; break; }
-  }
-  if (arrow < 0 || !head[0] || head[0].t !== 'id') throw new PseintError('Varaible de control inválida en Para.', line);
+  if (!head.length || head[0].t !== 'id') throw new PseintError('Variable de control inválida en Para.', line);
   var varName = head[0].v;
-  var init = this.parseExpr(head.slice(arrow + 1), line);
-  var pasoIdx = -1;
-  for (var p = 0; p < tail.length; p++) if (this.kw(tail[p]) === 'CONPASO') { pasoIdx = p; break; }
-  var fin = this.parseExpr(pasoIdx < 0 ? tail : tail.slice(0, pasoIdx), line);
-  var paso = pasoIdx < 0 ? null : this.parseExpr(tail.slice(pasoIdx + 1), line);
+  // Separador del valor inicial: `<-`, `=` (habitual en PSeInt) o las palabras Desde/En.
+  var sep = -1;
+  for (var a = 1; a < head.length; a++) {
+    var kk = this.kw(head[a]);
+    if ((head[a].t === 'op' && (head[a].v === '<-' || head[a].v === '=')) || kk === 'DESDE' || kk === 'EN') { sep = a; break; }
+  }
+  if (sep < 0) throw new PseintError('Variable de control inválida en Para.', line);
+  // "Con Paso" puede ir antes o después del Hasta: `Para i<-1 con paso 2 hasta 4`.
+  var headPaso = -1, tailPaso = -1;
+  for (var p = 1; p < head.length; p++) { var kp = this.kw(head[p]); if (kp === 'CONPASO' || kp === 'PASO') { headPaso = p; break; } }
+  if (headPaso < 0) { for (var q = 0; q < tail.length; q++) { var kq = this.kw(tail[q]); if (kq === 'CONPASO' || kq === 'PASO') { tailPaso = q; break; } } }
+  var initToks = headPaso >= 0 ? head.slice(sep + 1, headPaso) : head.slice(sep + 1);
+  var finToks = tailPaso >= 0 ? tail.slice(0, tailPaso) : tail;
+  var pasoToks = headPaso >= 0 ? head.slice(headPaso + 1) : (tailPaso >= 0 ? tail.slice(tailPaso + 1) : null);
+  if (!initToks.length) throw new PseintError('Falta el valor inicial del Para.', line);
+  if (!finToks.length) throw new PseintError('Falta el valor final del Para.', line);
+  var init = this.parseExpr(initToks, line);
+  var fin = this.parseExpr(finToks, line);
+  var paso = (pasoToks && pasoToks.length) ? this.parseExpr(pasoToks, line) : null;
   this.i++;
   var body = this.parseBlock(['FINPARA']);
   var st = this.tokensAt(this.i);
@@ -573,7 +646,7 @@ Parser.prototype.parseSegun = function (toks, line) {
     }
     var ci = indexOfOp(tk, ':');
     if (ci < 0) { this.i++; continue; }
-    var labels = this.parseExprList(tk.slice(0, ci), line);
+    var labels = this.parseCaseLabels(tk.slice(0, ci), line);
     var inlineStmt = tk.slice(ci + 1);
     this.i++;
     var body = [];
@@ -582,6 +655,27 @@ Parser.prototype.parseSegun = function (toks, line) {
     cases.push({ labels: labels, body: body });
   }
   return { t: 'segun', expr: expr, cases: cases, def: def, line: line };
+};
+
+/* Etiquetas de un caso: pueden ir separadas por comas o por la palabra `o`
+   (`2,3,4:` o `5,6 o 7:`). */
+Parser.prototype.parseCaseLabels = function (toks, line) {
+  var groups = [], depth = 0, cur = [];
+  for (var i = 0; i < toks.length; i++) {
+    var t = toks[i];
+    if (t.t === 'op' && (t.v === '(' || t.v === '[')) depth++;
+    if (t.t === 'op' && (t.v === ')' || t.v === ']')) depth--;
+    var cut = depth <= 0 && ((t.t === 'op' && t.v === ',') || (t.t === 'id' && this.kw(t) === 'O'));
+    if (cut) { if (cur.length) groups.push(cur); cur = []; continue; }
+    cur.push(t);
+  }
+  if (cur.length) groups.push(cur);
+  var out = [];
+  for (var g = 0; g < groups.length; g++) {
+    var st = { toks: groups[g], pos: 0 };
+    try { var n = this.parseExprState(st, 0); if (n) out.push(n); } catch (e) { /* etiqueta inválida */ }
+  }
+  return out;
 };
 
 Parser.prototype.isCaseLabel = function (tk) {
@@ -609,7 +703,7 @@ Parser.prototype.parseUntilCaseLabel = function () {
   return out;
 };
 
-/* Instrucción simple: asignación o llamada */
+/* Instrucción simple: asignación, definición coloquial o llamada */
 Parser.prototype.parseSimple = function (toks, line) {
   if (!toks.length) throw new PseintError('Instrucción vacía.', line);
   var assignIdx = -1;
@@ -625,11 +719,37 @@ Parser.prototype.parseSimple = function (toks, line) {
       return { t: 'asignar', target: lv.node, expr: rhs, line: line };
     }
   }
+  // Definición coloquial sin la palabra Definir:  x Es Entero  /  a,b son cadenas
+  var coloq = this.parseColoquialDefine(toks, line);
+  if (coloq) return coloq;
   // expresión suelta: llamada a subproceso
   var expr = this.parseExpr(toks, line);
   if (expr.t === 'call') return { t: 'llamar', call: expr, line: line };
   if (expr.t === 'var') return { t: 'llamar', call: { t: 'call', name: expr.name, canon: expr.canon, args: [], line: line }, line: line };
   throw new PseintError('No se reconoce la instrucción.', line);
+};
+
+/* `x es entero`, `a,b son cadenas`, `z Es Lógico`. Solo se acepta si el tipo es
+   uno de los conocidos y la parte izquierda son nombres de variable. */
+Parser.prototype.parseColoquialDefine = function (toks, line) {
+  var sep = -1;
+  for (var i = 1; i < toks.length; i++) {
+    var k = this.kw(toks[i]);
+    if (k === 'ES' || k === 'SON') { sep = i; break; }
+  }
+  if (sep < 1) return null;
+  var typeToks = toks.slice(sep + 1);
+  if (typeToks.length !== 1 || typeToks[0].t !== 'id') return null;
+  var tipo = TIPO_MAP[keyWord(typeToks[0].v)] || null;
+  if (!tipo) return null;
+  var names = [];
+  for (var g = 0; g < sep; g++) {
+    if (toks[g].t === 'op' && toks[g].v === ',') continue;
+    if (toks[g].t !== 'id') return null;
+    names.push({ name: toks[g].v, canon: canon(toks[g].v, this.allowAccents), dims: null, tipo: tipo });
+  }
+  if (!names.length) return null;
+  return { t: 'def', names: names, line: line };
 };
 
 /* lvalue: identificador + subíndices opcionales */
@@ -654,7 +774,7 @@ Parser.prototype.parseExprList = function (toks, line) {
   var out = [], p = 0, guard = 0;
   while (p < toks.length && guard++ < 1000) {
     if (toks[p].t === 'op' && toks[p].v === ',') { p++; continue; }
-    var st = { toks: toks, pos: p };
+    var st = { toks: toks, pos: p, line: line };
     var node = this.parseExprState(st, 0);
     if (!node) { p++; continue; }
     out.push(node);
@@ -666,7 +786,7 @@ Parser.prototype.parseExprList = function (toks, line) {
 
 Parser.prototype.parseExpr = function (toks, line) {
   if (!toks || !toks.length) throw new PseintError('Expresión vacía.', line);
-  var st = { toks: toks, pos: 0 };
+  var st = { toks: toks, pos: 0, line: line };
   var node = this.parseExprState(st, 0);
   if (!node) throw new PseintError('Expresión no válida.', line);
   // La expresión debe consumir TODOS los tokens. Si sobran, es un error de sintaxis
@@ -681,56 +801,115 @@ Parser.prototype.parseExpr = function (toks, line) {
 };
 
 var COLOQ = [
+  // Se probarán en orden: primero las formas más largas.
   { seq: ['ES','MAYOR','O','IGUAL','QUE'], op: '>=' },
-  { seq: ['ES','MENOR','O','IGUAL','QUE'], op: '<=' },
   { seq: ['ES','MAYOR','O','IGUAL','A'], op: '>=' },
+  { seq: ['ES','MENOR','O','IGUAL','QUE'], op: '<=' },
   { seq: ['ES','MENOR','O','IGUAL','A'], op: '<=' },
-  { seq: ['ES','MAYOR','QUE'], op: '>' },
-  { seq: ['ES','MENOR','QUE'], op: '<' },
-  { seq: ['ES','MAYOR','A'], op: '>' },
-  { seq: ['ES','MENOR','A'], op: '<' },
-  { seq: ['ES','IGUAL','A'], op: '=' },
-  { seq: ['ES','DISTINTO','DE'], op: '<>' },
-  { seq: ['ES','DIFERENTE','DE'], op: '<>' },
-  { seq: ['ES','DISTINTO','A'], op: '<>' },
+  { seq: ['ES','IGUAL','O','MAYOR','QUE'], op: '>=' },
+  { seq: ['ES','IGUAL','O','MAYOR','A'], op: '>=' },
+  { seq: ['ES','IGUAL','O','MENOR','QUE'], op: '<=' },
+  { seq: ['ES','IGUAL','O','MENOR','A'], op: '<=' },
+  { seq: ['ES','DIVISIBLE','POR'], op: 'multiplo' },
   { seq: ['ES','MULTIPLO','DE'], op: 'multiplo' },
-  { seq: ['ES','MÚLTIPLO','DE'], op: 'multiplo' },
   { seq: ['ES','MULTIPLO','QUE'], op: 'multiplo' },
+  { seq: ['ES','DISTINTO','DE'], op: '<>' },
+  { seq: ['ES','DISTINTO','A'], op: '<>' },
+  { seq: ['ES','DIFERENTE','DE'], op: '<>' },
+  { seq: ['ES','DIFERENTE','A'], op: '<>' },
+  { seq: ['ES','DISTINTA','DE'], op: '<>' },
+  { seq: ['ES','DISTINTA','A'], op: '<>' },
+  { seq: ['ES','MAYOR','QUE'], op: '>' },
+  { seq: ['ES','MAYOR','A'], op: '>' },
+  { seq: ['ES','MENOR','QUE'], op: '<' },
+  { seq: ['ES','MENOR','A'], op: '<' },
+  { seq: ['ES','IGUAL','QUE'], op: '=' },
+  { seq: ['ES','IGUAL','A'], op: '=' },
+  { seq: ['ES','DIFERENTE'], op: '<>' },
+  { seq: ['ES','POSITIVO'], op: 'positivo', postfix: true },
+  { seq: ['ES','POSITIVA'], op: 'positivo', postfix: true },
+  { seq: ['ES','NEGATIVO'], op: 'negativo', postfix: true },
+  { seq: ['ES','NEGATIVA'], op: 'negativo', postfix: true },
+  { seq: ['ES','CERO'], op: 'cero', postfix: true },
   { seq: ['ES','PAR'], op: 'par', postfix: true },
   { seq: ['ES','IMPAR'], op: 'impar', postfix: true },
+  { seq: ['ES','ENTEROS'], op: 'esentero', postfix: true },
+  { seq: ['ES','ENTERAS'], op: 'esentero', postfix: true },
   { seq: ['ES','ENTERO'], op: 'esentero', postfix: true },
+  { seq: ['ES','ENTERA'], op: 'esentero', postfix: true },
+  { seq: ['ES','REALES'], op: 'esreal', postfix: true },
   { seq: ['ES','REAL'], op: 'esreal', postfix: true },
+  { seq: ['ES','LOGICOS'], op: 'eslogico', postfix: true },
+  { seq: ['ES','LOGICAS'], op: 'eslogico', postfix: true },
   { seq: ['ES','LOGICO'], op: 'eslogico', postfix: true },
+  { seq: ['ES','LOGICA'], op: 'eslogico', postfix: true },
+  { seq: ['ES','CARACTERES'], op: 'escaracter', postfix: true },
   { seq: ['ES','CARACTER'], op: 'escaracter', postfix: true },
-  { seq: ['ES','NUMERO'], op: 'esnumero', postfix: true },
-  { seq: ['ES','NUMERICO'], op: 'esnumero', postfix: true },
   { seq: ['ES','TEXTO'], op: 'escaracter', postfix: true },
-  { seq: ['ES','CADENA'], op: 'escaracter', postfix: true }
+  { seq: ['ES','CADENA'], op: 'escaracter', postfix: true },
+  { seq: ['ES','NUMEROS'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERAS'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERO'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERA'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERICOS'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERICAS'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERICO'], op: 'esnumero', postfix: true },
+  { seq: ['ES','NUMERICA'], op: 'esnumero', postfix: true },
+  // `5 ES 10` es una igualdad
+  { seq: ['ES'], op: '=' }
 ];
 
-var PREC = { '|': 1, 'O': 1, '&': 2, 'Y': 2, '=': 3, '<>': 3, '<': 3, '<=': 3, '>': 3, '>=': 3, '+': 4, '-': 4, '*': 5, '/': 5, '%': 5, 'MOD': 5, '^': 7 };
+/* Precedencia real de PSeInt (comprobada con el intérprete oficial):
+     O  |  <  Y  &  <  NO  ~  !  <  = <> == !=  <  < > <= >=  <  + -  <  * / %  <  ^
+   Por eso `5 > 3 = 4 > 2` es `(5>3) = (4>2)` y `no 5 es 0` es `NO (5 es 0)`. */
+var PREC = { '|': 1, 'O': 1, '&': 2, 'Y': 2, '=': 4, '==': 4, '<>': 4, '!=': 4,
+             '<': 5, '>': 5, '<=': 5, '>=': 5, '+': 6, '-': 6, '*': 7, '/': 7, '%': 7, 'MOD': 7, '^': 9 };
+var PREC_NO = 3;   // la negación va por encima de Y/O y por debajo de las comparaciones
+
+/* Las comparaciones coloquiales conservan la precedencia de su símbolo. */
+function precDeOp(op) {
+  if (op === '=' || op === '==' || op === '<>' || op === '!=') return 4;
+  return 5;
+}
+
+/* Compara una secuencia de tokens con una lista de palabras clave. */
+Parser.prototype.matchWordSeq = function (toks, pos, seq) {
+  for (var s = 0; s < seq.length; s++) {
+    var t = toks[pos + s];
+    if (!t || t.t !== 'id' || keyWord(t.v) !== seq[s]) return false;
+  }
+  return true;
+};
 
 Parser.prototype.peekBinOp = function (st) {
   var tk = st.toks[st.pos];
   if (!tk) return null;
   if (tk.t === 'op') {
-    if (tk.v === '-' && st.toks[st.pos + 1] && st.toks[st.pos + 1].t === 'op' && st.toks[st.pos + 1].v === '>') { /* -> no aplica */ }
     if (PREC[tk.v] !== undefined) return { op: tk.v, prec: PREC[tk.v], len: 1, kind: 'bin' };
     return null;
   }
   if (tk.t === 'id') {
-    var k = canon(tk.v, this.allowAccents);
+    var k = this.kw(tk);
     // Y, O y MOD solo son operadores si el perfil habilita las palabras Y/O/NO/MOD.
     if (!this.wordOps && (k === 'Y' || k === 'O' || k === 'MOD')) return null;
     if (PREC[k] !== undefined) return { op: k, prec: PREC[k], len: 1, kind: 'bin' };
+    // Negación coloquial: `5 NO ES 0`, `x NO ES PAR` (equivale a NO (...)).
+    if (k === 'NO' || k === 'NOT') {
+      for (var j = 0; j < COLOQ.length; j++) {
+        var sq = COLOQ[j].seq;
+        if (this.matchWordSeq(st.toks, st.pos + 1, sq)) {
+          return { op: COLOQ[j].op, prec: precDeOp(COLOQ[j].op), len: 1 + sq.length, kind: 'bin', postfix: !!COLOQ[j].postfix, negate: true };
+        }
+      }
+    }
     if (k === 'ES') {
       for (var i = 0; i < COLOQ.length; i++) {
         var seq = COLOQ[i].seq, ok = true;
         for (var s = 0; s < seq.length; s++) {
           var t = st.toks[st.pos + s];
-          if (!t || t.t !== 'id' || canon(t.v, this.allowAccents) !== seq[s]) { ok = false; break; }
+          if (!t || t.t !== 'id' || keyWord(t.v) !== seq[s]) { ok = false; break; }
         }
-        if (ok) return { op: COLOQ[i].op, prec: 3, len: seq.length, kind: 'bin', postfix: !!COLOQ[i].postfix };
+        if (ok) return { op: COLOQ[i].op, prec: precDeOp(COLOQ[i].op), len: seq.length, kind: 'bin', postfix: !!COLOQ[i].postfix };
       }
     }
   }
@@ -744,12 +923,17 @@ Parser.prototype.parseExprState = function (st, minPrec) {
     var op = this.peekBinOp(st);
     if (!op || op.prec < minPrec) break;
     st.pos += op.len;
-    if (op.postfix) { left = { t: 'bin', op: op.op, a: left, b: null }; continue; }
+    if (op.postfix) { left = this.makeBin(op, left, null); continue; }
     var nextMin = (op.op === '^') ? op.prec : op.prec + 1;
     var right = this.parseExprState(st, nextMin);
-    left = { t: 'bin', op: op.op, a: left, b: right };
+    left = this.makeBin(op, left, right);
   }
   return left;
+};
+
+Parser.prototype.makeBin = function (op, a, b) {
+  var node = { t: 'bin', op: op.op, a: a, b: b };
+  return op.negate ? { t: 'un', op: '~', a: node } : node;
 };
 
 Parser.prototype.parseUnary = function (st) {
@@ -757,14 +941,17 @@ Parser.prototype.parseUnary = function (st) {
   if (!tk) return null;
   if (tk.t === 'op' && (tk.v === '-' || tk.v === '+' || tk.v === '~' || tk.v === '!')) {
     st.pos++;
-    var sub = this.parseUnary(st);
+    // La negación tiene menor precedencia que las comparaciones: `no 5 es 0`
+    // es `NO (5 es 0)`, pero mayor que Y/O: `no a y b` es `(NO a) Y b`.
+    var isNot = (tk.v === '~' || tk.v === '!');
+    var sub = isNot ? this.parseExprState(st, PREC_NO + 1) : this.parseUnary(st);
     // '!' es el NOT simbólico de PSeInt (misma tabla de operadores que '~').
-    return { t: 'un', op: tk.v === '!' ? '~' : tk.v, a: sub };
+    return { t: 'un', op: isNot ? '~' : tk.v, a: sub };
   }
   if (tk.t === 'id') {
-    var k = canon(tk.v, this.allowAccents);
+    var k = this.kw(tk);
     // `NO` es el NOT por palabra: solo existe si el perfil permite las palabras Y/O/NO.
-    if (this.wordOps && (k === 'NO' || k === 'NOT')) { st.pos++; return { t: 'un', op: '~', a: this.parseUnary(st) }; }
+    if (this.wordOps && (k === 'NO' || k === 'NOT')) { st.pos++; return { t: 'un', op: '~', a: this.parseExprState(st, PREC_NO + 1) }; }
   }
   return this.parsePrimary(st);
 };
@@ -781,7 +968,7 @@ Parser.prototype.parsePrimary = function (st) {
     return e;
   }
   if (tk.t === 'id') {
-    var k = canon(tk.v, this.allowAccents);
+    var k = this.kw(tk);
     // OJO: PSeInt NO tiene "V"/"F" como atajos de Verdadero/Falso (su lista de palabras
     // reservadas solo incluye VERDADERO y FALSO). Tratarlos como booleanos rompía
     // cualquier variable llamada `v` o `f`, p.ej. el patrón oficial de arreglo como
@@ -789,23 +976,28 @@ Parser.prototype.parsePrimary = function (st) {
     if (k === 'VERDADERO') { st.pos++; return { t: 'bool', v: true }; }
     if (k === 'FALSO') { st.pos++; return { t: 'bool', v: false }; }
     var name = tk.v; st.pos++;
-    // llamada a función o subíndice
+    var ln = st.line || 0;
+    // Llamada a función o subíndice. PSeInt acepta el paréntesis separado del nombre
+    // cuando el nombre es una función (`trunc (a/b)`), y lo trata como dos
+    // expresiones que se concatenan cuando es una variable (`Escribir A (1)`).
     var next = st.toks[st.pos];
-    if (next && next.t === 'op' && next.v === '(') {
+    var pegado = next && (next.s === undefined || tk.e === undefined || next.s === tk.e);
+    var esFuncion = !!this.funcNames[keyWord(name)];
+    if (next && next.t === 'op' && next.v === '(' && (pegado || esFuncion)) {
       var close = matchBracket(st.toks, st.pos);
       if (close < 0) close = st.toks.length;
-      var args = this.parseExprList(st.toks.slice(st.pos + 1, close), 0);
+      var args = this.parseExprList(st.toks.slice(st.pos + 1, close), ln);
       st.pos = close + 1;
-      return { t: 'call', name: name, canon: canon(name, this.allowAccents), args: args };
+      return { t: 'call', name: name, canon: canon(name, this.allowAccents), args: args, line: ln };
     }
     if (next && next.t === 'op' && next.v === '[') {
       var cl = matchBracket(st.toks, st.pos);
       if (cl < 0) cl = st.toks.length;
-      var subs = this.parseExprList(st.toks.slice(st.pos + 1, cl), 0);
+      var subs = this.parseExprList(st.toks.slice(st.pos + 1, cl), ln);
       st.pos = cl + 1;
-      return { t: 'var', name: name, canon: canon(name, this.allowAccents), subs: subs };
+      return { t: 'var', name: name, canon: canon(name, this.allowAccents), subs: subs, line: ln };
     }
-    return { t: 'var', name: name, canon: canon(name, this.allowAccents), subs: null };
+    return { t: 'var', name: name, canon: canon(name, this.allowAccents), subs: null, line: ln };
   }
   return null;
 };
@@ -856,6 +1048,78 @@ function matchBracket(toks, openIdx) {
 
 /* ═════════════════════════════ RUNTIME ═════════════════════════════ */
 
+/* PSeInt deduce el tipo de las variables que no se declararon mirando TODO el
+   programa, no solo lo que se ejecuta: si `b` recibe un número en una rama que no
+   se toma, al imprimir `b` sale 0 (y no vacío). Comprobado con el PSeInt real. */
+function tipoDeValor(v) {
+  if (typeof v === 'number') return Number.isInteger(v) ? 'entero' : 'real';
+  if (typeof v === 'string') return 'caracter';
+  if (typeof v === 'boolean') return 'logico';
+  return null;
+}
+
+function tipoDeExpr(n) {
+  if (!n) return null;
+  if (n.t === 'num') return Number.isInteger(n.v) ? 'entero' : 'real';
+  if (n.t === 'str') return 'caracter';
+  if (n.t === 'bool') return 'logico';
+  if (n.t === 'un') return n.op === '~' ? 'logico' : 'real';
+  if (n.t === 'call') {
+    var c = n.canon;
+    if (c === 'MAYUSCULAS' || c === 'MINUSCULAS' || c === 'SUBCADENA' || c === 'CONCATENAR' || c === 'CONVERTIRATEXTO') return 'caracter';
+    if (c === 'CONVERTIRANUMERO' || c === 'LONGITUD' || c === 'AZAR' || c === 'ALEATORIO') return 'real';
+    if (c === 'RC' || c === 'RAIZ' || c === 'ABS' || c === 'LN' || c === 'EXP' || c === 'SEN' || c === 'COS' || c === 'TAN' ||
+        c === 'ASEN' || c === 'ACOS' || c === 'ATAN' || c === 'TRUNC' || c === 'REDON' || c === 'PI' || c === 'EULER') return 'real';
+    return null;
+  }
+  if (n.t === 'bin') {
+    var k = n.op;
+    if (k === '=' || k === '==' || k === '<>' || k === '!=' || k === '<' || k === '>' || k === '<=' || k === '>=' ||
+        k === 'Y' || k === 'O' || k === '&' || k === '|' || k === 'par' || k === 'impar' || k === 'esentero' ||
+        k === 'esreal' || k === 'eslogico' || k === 'escaracter' || k === 'esnumero' || k === 'multiplo' ||
+        k === 'positivo' || k === 'negativo' || k === 'cero') return 'logico';
+    if (k === '+') {
+      if (tipoDeExpr(n.a) === 'caracter' || tipoDeExpr(n.b) === 'caracter') return 'caracter';
+    }
+    return 'real';
+  }
+  return null;
+}
+
+function inferTypes(ast) {
+  var map = Object.create(null);
+  function marca(c, tipo) { if (tipo && !map[c]) map[c] = tipo; }
+  function walk(list) {
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      if (!s) continue;
+      if (s.t === 'def') {
+        for (var d = 0; d < s.names.length; d++) {
+          var it = s.names[d];
+          if (!it.dims || !it.dims.length) marca(it.canon, it.tipo);
+        }
+      } else if (s.t === 'asignar') {
+        if (s.target.t === 'var' && (!s.target.subs || !s.target.subs.length)) marca(s.target.canon, tipoDeExpr(s.expr));
+      } else if (s.t === 'para') {
+        walk(s.body);
+      } else if (s.t === 'paracada') {
+        walk(s.body);
+      } else if (s.t === 'si') {
+        walk(s.then); walk(s.else);
+      } else if (s.t === 'mientras' || s.t === 'repetir') {
+        walk(s.body);
+      } else if (s.t === 'segun') {
+        for (var c = 0; c < s.cases.length; c++) walk(s.cases[c].body);
+        if (s.def) walk(s.def);
+      }
+    }
+  }
+  walk(ast.body);
+  for (var k = 0; k < ast.subs.length; k++) walk(ast.subs[k].body);
+  return map;
+}
+
+
 var MAX_STEPS = 4000000;
 
 function Scope(parent) { this.vars = Object.create(null); this.parent = parent; }
@@ -866,6 +1130,7 @@ function Interpreter(ast, rules, io) {
   this.io = io || {};
   this.allowAccents = this.rules.acentos_nombres !== false;
   this.base = this.rules.indices_base0 ? 0 : 1;
+  this.inferred = ast.inferred || {};
   this.global = new Scope(null);
   this.frame = this.global;
   this.funcs = Object.create(null);
@@ -888,7 +1153,8 @@ Interpreter.prototype.lookup = function (c) {
 
 Interpreter.prototype.declare = function (name, c, tipo) {
   if (this.frame.vars[c]) return this.frame.vars[c];
-  var e = { name: name, tipo: tipo || null, value: undefined, assigned: false,
+  if (!tipo && Object.prototype.hasOwnProperty.call(this.inferred, c)) tipo = this.inferred[c];
+  var e = { name: name, tipo: tipo || null, tipoDeclarado: false, value: undefined, assigned: false,
             isArray: false, dims: null, data: null, readOnly: false, used: false };
   this.frame.vars[c] = e;
   return e;
@@ -973,7 +1239,17 @@ Interpreter.prototype.execDef = function (s) {
   for (var i = 0; i < s.names.length; i++) {
     var it = s.names[i];
     var e = this.frame.vars[it.canon] || this.declare(it.name, it.canon, it.tipo);
+    if (it.tipo && e.tipoDeclarado && e.tipo && e.tipo !== it.tipo) {
+      throw new PseintError('La variable ' + it.name + ' ya estaba definida con otro tipo.', s.line);
+    }
+    if (it.tipo && e.tipo !== it.tipo && e.isArray && e.data) {
+      // Al declarar el tipo de un arreglo ya dimensionado, PSeInt inicializa las
+      // posiciones que aún no tenían valor con el valor por defecto de ese tipo.
+      var fill = defaultFor(it.tipo);
+      for (var k = 0; k < e.data.length; k++) if (e.data[k] === undefined) e.data[k] = fill;
+    }
     e.tipo = it.tipo || e.tipo;
+    if (it.tipo) e.tipoDeclarado = true;
     if (it.dims && it.dims.length) this.initArray(e, it.dims, s.line);
   }
 };
@@ -987,7 +1263,7 @@ Interpreter.prototype.initArray = function (e, dimExprs, line) {
   }
   var total = 1;
   for (var j = 0; j < dims.length; j++) total *= dims[j];
-  var fill = defaultFor(e.tipo);
+  var fill = e.tipo ? defaultFor(e.tipo) : undefined;
   var data = new Array(total);
   for (var k = 0; k < total; k++) data[k] = fill;
   e.isArray = true; e.dims = dims; e.data = data; e.assigned = true;
@@ -998,12 +1274,12 @@ Interpreter.prototype.execDim = function (s) {
     var it = s.items[i];
     var e = this.lookup(it.canon);
     if (!e) {
-      if (this.rules.obligar_definir) throw new PseintError('Variable no definida (' + it.name + '). Usa Definir.', s.line);
+      // `Dimensionar` ya define la variable: no hace falta un Definir previo.
       e = this.declare(it.name, it.canon, null);
     }
     if (s.redim) {
       if (!e.isArray) throw new PseintError(it.name + ' no estaba previamente dimensionado.', s.line);
-      if (!this.rules.redimensionar) throw new PseintError('El perfil no permite redimensionar arreglos.', s.line);
+      if (this.rules.redimensionar === false) throw new PseintError('El perfil no permite redimensionar arreglos.', s.line);
     }
     this.initArray(e, it.dims, s.line);
   }
@@ -1028,7 +1304,7 @@ Interpreter.prototype.execLeer = async function (s) {
       e = this.declare(tgt.name, tgt.canon, null);
     }
     this.emit('> ');
-    var raw = this.io.read ? await this.io.read() : '';
+    var raw = this.io.read ? await this.io.read(e.tipo || null, s.line) : '';
     raw = String(raw === undefined || raw === null ? '' : raw);
     var up = raw.toUpperCase();
     var value;
@@ -1041,6 +1317,7 @@ Interpreter.prototype.execLeer = async function (s) {
     else if (e.tipo === 'caracter') value = raw;
     else value = /^\s*[-+]?[0-9]*\.?[0-9]+\s*$/.test(raw) ? parseFloat(raw) : raw;
     if (e.isArray && tgt.subs) this.writeArrayElem(e, tgt.subs, value, s.line);
+    else if (e.value && e.value.__ref) { e.value.set(value); e.assigned = true; }
     else { e.value = value; e.assigned = true; }
   }
 };
@@ -1052,13 +1329,13 @@ Interpreter.prototype.execPara = async function (s) {
   var fin = toReal(await this.eval(s.fin));
   var paso;
   if (s.paso) paso = toReal(await this.eval(s.paso));
-  else if (this.rules.omitir_paso_menos1) paso = (init <= fin) ? 1 : -1;
+  else if (this.rules.omitir_paso_menos1 !== false) paso = (init <= fin) ? 1 : -1;
   else if (init <= fin) paso = 1;
   else throw new PseintError('Hace falta "Con Paso" para un ciclo decreciente.', s.line);
   if (paso === 0) throw new PseintError('El paso no puede ser 0.', s.line);
-  var prevRead = e.readOnly, prevVal = e.value, prevAssigned = e.assigned;
+  var prevRead = e.readOnly;
   e.value = init; e.assigned = true;
-  if (this.rules.proteger_contador) e.readOnly = true;
+  if (this.rules.proteger_contador !== false) e.readOnly = true;
   try {
     while (paso > 0 ? toReal(e.value) <= fin : toReal(e.value) >= fin) {
       this.tick();
@@ -1066,11 +1343,12 @@ Interpreter.prototype.execPara = async function (s) {
       await this.maybeYield();
       e.readOnly = false;
       e.value = toReal(e.value) + paso;
-      if (this.rules.proteger_contador) e.readOnly = true;
+      if (this.rules.proteger_contador !== false) e.readOnly = true;
     }
   } finally {
+    // La variable de control conserva el último valor que tomó (igual que PSeInt);
+    // lo único que se restaura es el permiso de escritura.
     e.readOnly = prevRead;
-    if (prevVal === undefined) { e.value = undefined; e.assigned = prevAssigned; }
   }
 };
 
@@ -1085,10 +1363,8 @@ Interpreter.prototype.execParaCada = async function (s) {
   for (var n = 0; n < arr.data.length; n++) {
     this.tick();
     this.offsetToIdx(n, dims, idx);
-    el.value = arr.data[n];
     el.assigned = true;
-    // 'elem' referencia la posición: al asignarlo se escribe en el arreglo
-    var self = this;
+    // 'elem' referencia la posición: leerlo y asignarlo actúa sobre el arreglo
     el.value = { __ref: true, get: function () { return arr.data[n]; }, set: function (v) { arr.data[n] = v; } };
     await this.execBlock(s.body);
     await this.maybeYield();
@@ -1125,7 +1401,13 @@ Interpreter.prototype.looseEq = function (a, b) {
 
 /* ───────────────────── Lectura / escritura de variables ───────────────────── */
 
-Interpreter.prototype.defaultOf = function (e) { return e.value !== undefined ? e.value : defaultFor(e.tipo); };
+Interpreter.prototype.defaultOf = function (e) {
+  if (e.value !== undefined) return e.value;
+  // Sin tipo declarado, PSeInt no asigna ningún valor: al imprimir sale en blanco
+  // y en cualquier operación numérica cuenta como 0.
+  if (e.tipo) return defaultFor(e.tipo);
+  return undefined;
+};
 
 var ZERO_ARG_FUNCS = { PI: 1, EULER: 1, FECHAACTUAL: 1, HORAACTUAL: 1 };
 
@@ -1161,10 +1443,41 @@ Interpreter.prototype.writeLValue = function (lv, val, line) {
   }
   if (e.readOnly) throw new PseintError('No se puede modificar la variable ' + lv.name + ' (contador del Para).', line);
   if (lv.subs && lv.subs.length) { this.writeArrayElem(e, lv.subs, val, line); return; }
-  if (e.value && e.value.__ref) { e.value.set(this.coerce(val, e)); e.assigned = true; return; }
-  e.value = this.coerce(val, e);
+  var out = this.storeValue(e, val, line);
+  if (e.value && e.value.__ref) { e.value.set(out); e.assigned = true; return; }
+  e.value = out;
   e.assigned = true;
   e.used = true;
+};
+
+/* PSeInt es estricto con los tipos declarados: no se puede guardar texto en una
+   variable numérica (SynError 125) ni decimales en una entero (ExeError 314).
+   El tipo de las variables sin declarar se deduce del primer valor guardado. */
+Interpreter.prototype.storeValue = function (e, val, line) {
+  var vt = tipoDeValor(val);
+  if (e.tipo) {
+    this.checkAssign(e, val, vt, line);
+    if (e.tipo === 'entero' && vt === 'real' && !e.tipoDeclarado) e.tipo = 'real';
+  } else if (vt) {
+    e.tipo = vt;
+  }
+  return this.coerce(val, e);
+};
+
+Interpreter.prototype.checkAssign = function (e, val, vt, line) {
+  if (val === undefined || val === null || !vt) return;
+  if (e.tipo === 'caracter') {
+    if (vt !== 'caracter') throw new PseintError('La variable de texto ' + e.name + ' solo admite texto.', line);
+    return;
+  }
+  if (e.tipo === 'logico') {
+    if (vt !== 'logico') throw new PseintError('La variable lógica ' + e.name + ' solo admite Verdadero o Falso.', line);
+    return;
+  }
+  if (vt !== 'entero' && vt !== 'real') throw new PseintError('La variable numérica ' + e.name + ' no admite texto ni valores lógicos.', line);
+  if (e.tipo === 'entero' && e.tipoDeclarado && vt === 'real' && !Number.isInteger(val)) {
+    throw new PseintError('La variable entera ' + e.name + ' no admite valores con decimales.', line);
+  }
 };
 
 Interpreter.prototype.coerce = function (val, e) {
@@ -1197,6 +1510,7 @@ Interpreter.prototype.readArrayElem = function (e, subs, line) {
 Interpreter.prototype.writeArrayElem = function (e, subs, val, line) {
   if (!e.isArray) throw new PseintError('La variable no es un arreglo.', line);
   var off = this.arrayOffset(e, subs, line);
+  if (e.tipo) this.checkAssign(e, val, tipoDeValor(val), line);
   e.data[off] = e.tipo === 'entero' ? Math.round(toReal(val)) : (e.tipo === 'real' ? toReal(val) : val);
   e.assigned = true;
 };
@@ -1231,7 +1545,15 @@ Interpreter.prototype.eval = async function (n) {
     case 'num': return n.v;
     case 'str': return n.v;
     case 'bool': return n.v;
-    case 'var': return this.readLValue(n);
+    case 'var': {
+      // PSeInt permite escribir una función sin paréntesis si no recibe argumentos:
+      // `Escribir Booga2` o `Escribir Booga2+20` llaman a la función.
+      var ent = this.lookup(n.canon);
+      if (!ent && this.funcs[n.canon] && (!n.subs || !n.subs.length)) {
+        return await this.evalCall({ t: 'call', name: n.name, canon: n.canon, args: [], line: n.line }, n.line);
+      }
+      return this.readLValue(n);
+    }
     case 'call': return await this.evalCall(n, n.line);
     case 'un': {
       var a = await this.eval(n.a);
@@ -1263,8 +1585,8 @@ Interpreter.prototype.applyOp = function (op, a, b, line) {
   switch (op) {
     case '&': case 'Y': return truthy(a) && truthy(b);
     case '|': case 'O': return truthy(a) || truthy(b);
-    case '=': return this.looseEq(a, b);
-    case '<>': return !this.looseEq(a, b);
+    case '=': case '==': return this.looseEq(a, b);
+    case '<>': case '!=': return !this.looseEq(a, b);
     case '<': return this.cmp(a, b) < 0;
     case '>': return this.cmp(a, b) > 0;
     case '<=': return this.cmp(a, b) <= 0;
@@ -1283,9 +1605,12 @@ Interpreter.prototype.applyOp = function (op, a, b, line) {
       return toInt(a) % dd;
     }
     case '^': return Math.pow(toReal(a), toReal(b));
-    case 'multiplo': return toInt(a) % toInt(b) === 0;
+    case 'multiplo': return toInt(b) !== 0 && toInt(a) % toInt(b) === 0;
     case 'par': return toInt(a) % 2 === 0;
     case 'impar': return Math.abs(toInt(a) % 2) === 1;
+    case 'positivo': return toReal(a) > 0;
+    case 'negativo': return toReal(a) < 0;
+    case 'cero': return typeof a === 'number' ? a === 0 : (toStr(a) === '' || toReal(a) === 0);
     case 'esentero': return typeof a === 'number' && Number.isInteger(a);
     case 'esreal': return typeof a === 'number' && !Number.isInteger(a);
     case 'eslogico': return typeof a === 'boolean';
@@ -1316,7 +1641,13 @@ Interpreter.prototype.cmp = function (a, b) {
 
 Interpreter.prototype.evalCall = async function (call, line) {
   var f = this.funcs[call.canon];
-  if (!f) return this.callBuiltin(call, line);
+  if (!f) {
+    // PSeInt admite acceder a un arreglo con paréntesis: `a(3)` es `a[3]`
+    // (caso oficial acentos-01: dentro de un subproceso, `según a(1) hacer`).
+    var arr = this.lookup(call.canon);
+    if (arr && arr.isArray && call.args && call.args.length) return this.readArrayElem(arr, call.args, line);
+    return this.callBuiltin(call, line);
+  }
   if (this.rules.funciones_subproc === false) throw new PseintError('El perfil no permite definir funciones/subprocesos.', line);
   // Los argumentos SIEMPRE se evalúan en el marco del llamador.
   var bound = [];
@@ -1401,13 +1732,17 @@ Interpreter.prototype.callBuiltin = async function (call, line) {
     case 'SEN': return Math.sin(num(A[0]));
     case 'COS': return Math.cos(num(A[0]));
     case 'TAN': return Math.tan(num(A[0]));
-    case 'ASEN': return Math.asin(num(A[0]));
-    case 'ACOS': return Math.acos(num(A[0]));
+    case 'ASEN': { var sa = num(A[0]); if (sa < -1 || sa > 1) throw new PseintError('El seno debe estar entre -1 y 1.', line); return Math.asin(sa); }
+    case 'ACOS': { var ca = num(A[0]); if (ca < -1 || ca > 1) throw new PseintError('El coseno debe estar entre -1 y 1.', line); return Math.acos(ca); }
     case 'ATAN': return Math.atan(num(A[0]));
     case 'AZAR': { var n = toInt(A[0]); if (n <= 0) throw new PseintError('Azar de 0 o negativo.', line); return Math.floor(Math.random() * n); }
     case 'ALEATORIO': { var a = toInt(A[0]), b = toInt(A[1]); if (b < a) { var t = a; a = b; b = t; } return a + Math.floor(Math.random() * (b - a + 1)); }
-    case 'TRUNC': return Math.trunc(num(A[0]));
-    case 'REDON': { var r = num(A[0]); return Math.round(r < 0 ? r - 0.5 + 0.5 : r); }
+    case 'TRUNC': return Math.trunc(cleanFloat(num(A[0])));
+    case 'REDON': {
+      // PSeInt redondea alejándose del cero (mitad hacia arriba en valor absoluto).
+      var r = cleanFloat(num(A[0]));
+      return r < 0 ? -Math.round(-r) : Math.round(r);
+    }
     case 'FECHAACTUAL': { var d = new Date(); return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate(); }
     case 'HORAACTUAL': { var h = new Date(); return h.getHours() * 10000 + h.getMinutes() * 100 + h.getSeconds(); }
     case 'LONGITUD': this.needStr(); return String(toStr(A[0])).length;
@@ -1456,6 +1791,7 @@ Runner.prototype.run = async function () {
   var self = this;
   try {
     var ast = parse(this.code, this.rules);
+    ast.inferred = inferTypes(ast);
     var interp = new Interpreter(ast, this.rules, this.io);
     this.interp = interp;
     if (this.io.onStart) this.io.onStart(ast.name);
