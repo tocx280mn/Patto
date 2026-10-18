@@ -11,7 +11,9 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
 
 - Escribe pseudocodigo PSeInt respetando el perfil de lenguaje activo.
 - Ejecuta el algoritmo: la consola atiende los `Leer` y muestra la salida de
-  `Escribir`.
+  `Escribir`. Se cierra sola al cambiar de conversacion, al limpiarla o borrarla y
+  al enviar un mensaje nuevo; si habia un programa corriendo (o esperando un dato)
+  se detiene.
 - Antes de responder, ejecuta el pseudocodigo con el motor y, si da error, se lo
   devuelve al modelo para que lo corrija. Se apaga en Configuracion.
 - Lo prueba con 10 juegos de datos de relleno (menus, ceros, negativos...) para

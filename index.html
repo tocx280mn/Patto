@@ -1453,7 +1453,7 @@
                         <span id="consoleStatus" class="console-status">Listo</span>
                         <button type="button" id="consoleStopBtn" class="console-btn" title="Detener la ejecución" onclick="stopPseRun()">&#9632;</button>
                         <button type="button" class="console-btn" title="Limpiar la consola" onclick="clearPseConsole()">&#9003;</button>
-                        <button type="button" class="console-btn" title="Cerrar" onclick="closePseConsole()">&#10005;</button>
+                        <button type="button" class="console-btn" title="Cerrar" onclick="cerrarConsolaPse()">&#10005;</button>
                     </div>
                 </div>
                 <div id="consoleOutput" class="console-output" onclick="pseReleaseKey()"></div>
@@ -3065,6 +3065,14 @@
             if (out) out.innerHTML = '';
         };
 
+        /* Cierra la consola y, si había un programa en ejecución, lo detiene: al
+           cambiar de conversación (o al cerrar la consola a mano) no puede quedar
+           un programa corriendo —ni esperando un dato— en un panel que ya no se ve. */
+        window.cerrarConsolaPse = function() {
+            if (pseRun || pseInputResolver || pseKeyResolver) window.stopPseRun();
+            window.closePseConsole();
+        };
+
         /* Si la ventana cambia de tamaño, el fondo oscuro solo debe existir cuando la consola se superpone. */
         window.addEventListener('resize', () => {
             const p = document.getElementById('consolePanel');
@@ -4225,6 +4233,7 @@
             persistCurrentConversation();
             currentChatId = null;
             messages = [];
+            window.cerrarConsolaPse();
             clearPendingAttachment();
             renderWelcomeScreen();
             renderHistory();
@@ -4237,6 +4246,7 @@
             if (!c) return;
             currentChatId = c.id;
             messages = [...c.messages];
+            window.cerrarConsolaPse();
             clearPendingAttachment();
             renderConversationMessages();
             renderHistory();
@@ -4251,6 +4261,7 @@
             if (currentChatId === id) {
                 currentChatId = null;
                 messages = [];
+                window.cerrarConsolaPse();
                 renderWelcomeScreen();
             }
             renderHistory();
@@ -4266,6 +4277,7 @@
                 currentChatId = null;
                 saveChatsToStorage();
             }
+            window.cerrarConsolaPse();
             renderWelcomeScreen();
             renderHistory();
             showToast('Conversación limpiada');
@@ -4484,6 +4496,9 @@
             autoGrowInput(inp);
             clearPendingAttachment();
             setGeneratingState(true);
+            // Un mensaje nuevo cierra la consola igual que al cambiar de chat: si
+            // había un programa ejecutándose (o esperando un dato) se detiene.
+            window.cerrarConsolaPse();
 
             messages.push({ role: 'user', content: userText });
             appendMessageBubble('user', userText, false);
@@ -4953,6 +4968,6 @@
     </script>
 
     <!-- ══════════ Fondo (se usa solo cuando la consola se superpone en pantallas pequeñas) ══════════ -->
-    <div id="consoleBackdrop" class="console-backdrop" onclick="closePseConsole()"></div>
+    <div id="consoleBackdrop" class="console-backdrop" onclick="cerrarConsolaPse()"></div>
 </body>
 </html>
