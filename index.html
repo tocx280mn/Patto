@@ -6,6 +6,10 @@
     <title>Patto</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 76'%3E%3Cpath d='M38 40 C26 39 10 42 5 49 C1 54 11 63 24 65 C33 66 37 61 38 51 Z' fill='%2316A34A' stroke='%230F172A' stroke-width='3.5' stroke-linejoin='round'/%3E%3Cellipse cx='22' cy='52' rx='8' ry='4.2' fill='%2386EFAC' stroke='%230F172A' stroke-width='2.8'/%3E%3Cline x1='19' y1='64' x2='17' y2='72' stroke='%23D97706' stroke-width='3.5' stroke-linecap='round'/%3E%3Cline x1='27' y1='65' x2='26' y2='73' stroke='%23D97706' stroke-width='3.5' stroke-linecap='round'/%3E%3Cpath d='M34 41 C28 31 28 14 35 8 C41 3 52 5 55 14 C56 18 55 21 53 23' fill='%2316A34A' stroke='%230F172A' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M38 22 L38 62' stroke='%230F172A' stroke-width='4.5' stroke-linecap='round'/%3E%3Cpath d='M38 21 C58 19 72 23 72 33 C72 43 57 44 38 41 Z' fill='%23F59E0B' stroke='%230F172A' stroke-width='3.5' stroke-linejoin='round'/%3E%3Ccircle cx='42' cy='14' r='2.3' fill='%230F172A'/%3E%3Ccircle cx='49' cy='14.5' r='2.3' fill='%230F172A'/%3E%3C/svg%3E">
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fórmulas LaTeX que escribe el modelo ($...$, $$...$$, \[...\], \(...\)) con KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
     <!-- Catálogo completo de perfiles oficiales de PSeInt (generado desde el código fuente) -->
     <script src="perfiles.js?v=20261016"></script>
     <!-- Intérprete de PSeInt en JavaScript + generador de diagramas (sin servidor) -->
@@ -1087,6 +1091,16 @@
         #consolePanel,
         .pseint-code-card,
         .pseint-code-header { transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease; }
+
+        /* Fórmulas LaTeX (KaTeX): las destacadas pueden salir anchas; que se puedan
+           deslizar en pantallas estrechas en vez de desbordar el globo del chat. */
+        .katex-display {
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 2px 0;
+            margin: 0.4em 0;
+        }
+        .katex { font-size: 1.05em; }
 
         /* Accesibilidad: si el sistema pide no animar, no se anima nada */
         @media (prefers-reduced-motion: reduce) {
@@ -2217,6 +2231,8 @@
                 `REGLAS OBLIGATORIAS DEL PERFIL ACTIVO "${activePresetName}" — SI NO LAS CUMPLES, PSeInt RECHAZARÁ EL CÓDIGO CON ERRORES DE SINTAXIS:`,
                 rulesText,
                 '',
+                'FORMATO: las fórmulas matemáticas escríbelas en LaTeX (el chat las dibuja como fórmulas de verdad): $...$ en línea y $$...$$ o \\[...\\] destacadas. No las escribas en texto plano ni dentro de los bloques ```pseint```.',
+                '',
                 'CHECKLIST FINAL: revisa tu código línea por línea ANTES de enviarlo:',
                 `1) ¿Usas ${P.palabras_yono ? 'Y / O / NO / MOD' : '&& / || / ~ / %'} y NINGUNO del otro grupo?`,
                 `2) ${P.controlar_pc ? '¿Termina CADA sentencia secuencial con ";"?' : '¿Evitas los ";" innecesarios?'}`,
@@ -2970,6 +2986,37 @@
             return text;
         }
 
+        /* Las fórmulas del modelo ("$...$", "$$...$$", "\[...\]" y "\(...\)") se
+           dibujan con KaTeX. Dentro de los bloques de código, del código en línea y
+           de los botones no entra; si el CDN de KaTeX no cargó, el texto se queda
+           como está y no se rompe nada. */
+        function renderMathIn(el) {
+            if (!el || typeof window.renderMathInElement !== 'function') return;
+            try {
+                window.renderMathInElement(el, {
+                    delimiters: [
+                        { left: '$$', right: '$$', display: true },
+                        { left: '\\[', right: '\\]', display: true },
+                        { left: '\\(', right: '\\)', display: false },
+                        { left: '$', right: '$', display: false }
+                    ],
+                    ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option', 'button'],
+                    ignoredClasses: ['no-math'],
+                    throwOnError: false
+                });
+            } catch (e) { /* ante cualquier fallo, el texto se queda tal cual */ }
+        }
+
+        /* Durante el streaming el globo se repinta muchas veces por segundo: se
+           salta el renderizado si acaba de hacerse (al terminar se aplica entero). */
+        function renderMathInSoon(el) {
+            if (!el || typeof window.renderMathInElement !== 'function') return;
+            const ahora = performance.now();
+            if (el.__katexMs && ahora - el.__katexMs < 400) return;
+            el.__katexMs = ahora;
+            renderMathIn(el);
+        }
+
         /* ═══════════════════════════════════════════════════════════════════════
            8. COPIAR Y DESCARGAR ARCHIVOS .PSC
            ═══════════════════════════════════════════════════════════════════════ */
@@ -3624,6 +3671,7 @@
                 targetEl.innerHTML = thoughtHtml + (effectiveAnswer
                     ? formatAssistantMarkdown(effectiveAnswer)
                     : `<div class="py-1.5 flex items-center gap-1.5"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>`) + liveStats;
+                renderMathInSoon(targetEl);
                 scrollToBottom();
             };
 
@@ -4403,6 +4451,7 @@
             }
 
             inner.appendChild(wrapper);
+            renderMathIn(wrapper);
             scrollToBottom();
             return bubbleBodyId;
         }
@@ -4466,6 +4515,7 @@
                     ? buildThoughtBoxHtml(currentThought, durationSec, false, thoughtBoxId)
                     : '';
                 targetEl.innerHTML = thoughtHtml + formatAssistantMarkdown(currentAnswer);
+                renderMathInSoon(targetEl);
                 scrollToBottom();
                 await new Promise(r => setTimeout(r, 16));
             }
@@ -4743,6 +4793,7 @@
             });
 
             targetEl.innerHTML = finalThoughtHtml + formatAssistantMarkdown(finalAnswer, verifyReport) + truncatedNote + finalStatsHtml;
+            renderMathIn(targetEl);
 
             messages.push({
                 role: 'assistant',

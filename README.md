@@ -29,6 +29,10 @@ usa WebAssembly ni servicios externos, todo corre en el navegador.
 - Panel de razonamiento con el nivel de esfuerzo activo (Low, Medium, High, Max).
   Apagado por defecto; se enciende con el boton del cerebro.
 - Contador real de velocidad: tokens por segundo, tokens y segundos.
+- Las formulas matematicas que Patto escribe en LaTeX (`$...$`, `$$...$$`, `\[...\]`
+  y `\(...\)`) se dibujan como formulas de verdad con KaTeX, cargado del CDN igual
+  que Tailwind. Dentro de los bloques de codigo y del codigo en linea no toca nada;
+  si el CDN no carga, el texto se ve tal cual y el chat funciona igual.
 - Busqueda en internet opcional, apagada por defecto. Apagada, Patto solo
   responde sobre PSeInt; encendida, consulta la web cuando hace falta.
 - Adjunta archivos `.psc` para que los revise o los ejecute.
